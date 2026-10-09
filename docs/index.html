@@ -113,6 +113,7 @@
 
   <div class="row">
     <button id="flip">Flip camera</button>
+    <button id="rotBtn">Rotate</button>
     <button id="snap">Snapshot</button>
     <button id="rec" class="rec">Record</button>
     <span id="recTime" class="val"></span>
@@ -213,6 +214,7 @@ uniform vec2 uRes,uCover,uTexel;
 uniform float uTime;
 uniform float uKSeg,uMirror,uSwirl,uBulge,uWave,uPixel;
 uniform float uSpin,uTunnel,uPulse,uFlow,uDrift,uShake;
+uniform float uRot;
 uniform float uGlitch,uVHS;
 uniform float uRGB,uHue,uPoster,uDuo,uInvert,uPrism,uPlasma;
 uniform float uEdge,uScan,uGrain,uVig,uRays,uStars,uHalftone;
@@ -236,6 +238,13 @@ float lumAt(vec2 p){return dot(texture(uTex,p).rgb,vec3(0.299,0.587,0.114));}
 void main(){
   float t=uTime;
   vec2 uv=(vUv-0.5)*uCover+0.5;
+  if(uRot>0.5){
+    vec2 rc=uv-0.5;
+    if(uRot<1.5) rc=vec2(-rc.y,rc.x);
+    else if(uRot<2.5) rc=-rc;
+    else rc=vec2(rc.y,-rc.x);
+    uv=rc+0.5;
+  }
   if(uKSeg>0.5){
     vec2 c=uv-0.5; float r=length(c); float a=atan(c.y,c.x);
     float sl=6.2831853/uKSeg; a=mod(a,sl); a=abs(a-sl*0.5);
@@ -449,7 +458,7 @@ function useQuad(p){
 }
 const fxP=prog(FS_FX,["uTex","uRes","uCover","uTexel","uTime",
   "uKSeg","uMirror","uSwirl","uBulge","uWave","uPixel",
-  "uSpin","uTunnel","uPulse","uFlow","uDrift","uShake",
+  "uSpin","uTunnel","uPulse","uFlow","uDrift","uShake","uRot",
   "uGlitch","uVHS","uRGB","uHue","uPoster","uDuo","uInvert","uPrism","uPlasma",
   "uEdge","uScan","uGrain","uVig","uRays","uStars","uHalftone"]);
 const compP=prog(FS_COMP,["uCur","uPrev","uTAmt","uTZoom","uFRot"]);
@@ -618,6 +627,7 @@ async function initCamera(){
 $("camRetry").onclick=async()=>{hideCambar();await initCamera();};
 $("retryCam").onclick=async()=>{await initCamera();};
 $("flip").onclick=async()=>{S.facing=S.facing==="environment"?"user":"environment";await initCamera();};
+$("rotBtn").onclick=()=>{S.rot=((S.rot||0)+1)%4;nudge("Rotation: "+(S.rot*90)+"°");};
 
 const photoCan=document.createElement("canvas");
 $("btnPhoto").onclick=()=>$("capPhoto").click();
@@ -665,12 +675,16 @@ function drawFx(t){
   const on=id=>F[id].on?F[id].amt:0;
   gl.uniform1i(U.uTex,0);
   gl.uniform2f(U.uRes,canvas.width,canvas.height);
-  const ca=S.reactor?16/9:camW/camH,sa=canvas.width/canvas.height;
+  const rot=S.rot||0, swap=rot===1||rot===3;
+  const ca0=S.reactor?16/9:camW/camH;
+  const ca=swap?1/ca0:ca0, sa=canvas.width/canvas.height;
   let cx=1,cy=1; if(sa>ca){cx=ca/sa;}else{cy=sa/ca;}
   gl.uniform2f(U.uCover,cx,cy);
-  if(S.reactor) gl.uniform2f(U.uTexel,1/512,1/288);
-  else gl.uniform2f(U.uTexel,1/camW,1/camH);
+  let tx=S.reactor?512:camW, ty=S.reactor?288:camH;
+  if(swap){const tmp=tx;tx=ty;ty=tmp;}
+  gl.uniform2f(U.uTexel,1/tx,1/ty);
   gl.uniform1f(U.uTime,t);
+  gl.uniform1f(U.uRot,rot);
   gl.uniform1f(U.uKSeg,on("kaleido"));
   gl.uniform1f(U.uMirror,F.mirror.on?S.mirrorMode:0);
   gl.uniform1f(U.uSwirl,on("swirl"));
@@ -1042,6 +1056,7 @@ function stepReactor(){
 
 /* reactor UI */
 S.rPal=1; // 0 inferno (yellow), 1 glacier (blue) — video is blue
+S.rot=0; // camera rotation in quarter turns
 $("srcCam").onclick=()=>{S.reactor=false;
   $("srcCam").setAttribute("aria-pressed","true");
   $("srcReactor").setAttribute("aria-pressed","false");
@@ -1066,10 +1081,15 @@ $("palGlacier").onclick=()=>{S.rPal=1;
 canvas.addEventListener("pointerdown",e=>{
   if(!S.reactor)return;
   const r=canvas.getBoundingClientRect();
-  const sa=r.width/r.height,ca=16/9;
+  const rot=S.rot||0;
+  const sa=r.width/r.height;
+  let ca=16/9; if(rot===1||rot===3) ca=9/16;
   let cx=1,cy=1; if(sa>ca)cx=ca/sa; else cy=sa/ca;
-  const vx=(e.clientX-r.left)/r.width, vy=1-(e.clientY-r.top)/r.height;
-  const u=(vx-0.5)*cx+0.5, v=(vy-0.5)*cy+0.5;
+  let qx=(e.clientX-r.left)/r.width-0.5, qy=1-(e.clientY-r.top)/r.height-0.5;
+  if(rot===1){const t=qx;qx=qy;qy=-t;}
+  else if(rot===2){qx=-qx;qy=-qy;}
+  else if(rot===3){const t=qx;qx=-qy;qy=t;}
+  const u=qx*cx+0.5, v=qy*cy+0.5;
   if(u>=0&&u<=1&&v>=0&&v<=1){seedQueue.push([u,v]);nudge("Splat",900);}
 });
 simInit();
