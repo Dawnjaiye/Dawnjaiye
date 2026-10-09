@@ -9,7 +9,7 @@
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
     font-family:-apple-system,"Segoe UI",system-ui,sans-serif; color:#eee; }
-  #view { position:fixed; inset:0; width:100%; height:100%; object-fit:contain;
+  #view { position:fixed; inset:0; width:100%; height:100%;
     display:block; touch-action:none; background:#000; }
   #panel { position:fixed; left:0; right:0; bottom:0; max-height:64%; overflow-y:auto;
     background:rgba(8,8,10,.94); backdrop-filter:blur(10px);
@@ -619,6 +619,7 @@ function loop(ts){
   const dt=Math.min(0.1,lastTs?(ts-lastTs)/1000:0.016); lastTs=ts;
   simT+=dt*S.motion;
   renderFrame(simT);
+  if(recorder)blitToRec();
 }
 
 /* ================= UI ================= */
@@ -672,16 +673,29 @@ $("sMotion").oninput=e=>{S.motion=+e.target.value;$("vMotion").textContent=S.mot
 $("grab").onclick=()=>$("panel").classList.toggle("hidden");
 $("qSel").onchange=e=>{S.quality=+e.target.value;resize();nudge("Capture quality: "+S.quality+"p");};
 $("bSel").onchange=e=>{S.bitrate=+e.target.value;};
-function resize(){
+const recCanvas=document.createElement("canvas");
+const rctx=recCanvas.getContext("2d");
+function sizeRecCanvas(){
   const w=S.quality===1080?1920:1280;
-  canvas.width=w;canvas.height=Math.floor(w*9/16);
-  buildFBOs();
+  recCanvas.width=w; recCanvas.height=Math.floor(w*9/16);
+}
+function blitToRec(){
+  const sw=canvas.width,sh=canvas.height,tA=16/9,sA=sw/sh;
+  let sx=0,sy=0,cw=sw,ch=sh;
+  if(sA>tA){cw=sh*tA;sx=(sw-cw)/2;}else{ch=sw/tA;sy=(sh-ch)/2;}
+  rctx.drawImage(canvas,sx,sy,cw,ch,0,0,recCanvas.width,recCanvas.height);
+}
+function resize(){
+  const dpr=Math.min(2,devicePixelRatio||1);
+  canvas.width=Math.floor(innerWidth*dpr);canvas.height=Math.floor(innerHeight*dpr);
+  buildFBOs(); sizeRecCanvas();
 }
 
 /* snapshot + recording */
 $("snap").onclick=()=>{
   renderFrame(simT);
-  canvas.toBlob(b=>{if(!b){nudge("Snapshot failed");return;}
+  blitToRec();
+  recCanvas.toBlob(b=>{if(!b){nudge("Snapshot failed");return;}
     const a=document.createElement("a");
     a.href=URL.createObjectURL(b);a.download="prism-cam-"+S.quality+"p.png";a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);});
@@ -692,7 +706,7 @@ $("rec").onclick=e=>{
   const btn=e.target;
   if(recorder){recorder.stop();return;}
   if(!window.MediaRecorder){nudge("Recording not supported in this browser");return;}
-  const stream=canvas.captureStream(30);
+  const stream=recCanvas.captureStream(30);
   const mime=["video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"]
     .find(m=>MediaRecorder.isTypeSupported(m));
   if(!mime){nudge("Recording not supported in this browser");return;}
@@ -933,10 +947,10 @@ $("palGlacier").onclick=()=>{S.rPal=1;
 canvas.addEventListener("pointerdown",e=>{
   if(!S.reactor)return;
   const r=canvas.getBoundingClientRect();
-  const s=Math.min(r.width/16,r.height/9);
-  const dw=16*s,dh=9*s;
-  const ox=r.left+(r.width-dw)/2, oy=r.top+(r.height-dh)/2;
-  const u=(e.clientX-ox)/dw, v=1-(e.clientY-oy)/dh;
+  const sa=r.width/r.height,ca=16/9;
+  let cx=1,cy=1; if(sa>ca)cx=ca/sa; else cy=sa/ca;
+  const vx=(e.clientX-r.left)/r.width, vy=1-(e.clientY-r.top)/r.height;
+  const u=(vx-0.5)*cx+0.5, v=(vy-0.5)*cy+0.5;
   if(u>=0&&u<=1&&v>=0&&v<=1){seedQueue.push([u,v]);nudge("Splat",900);}
 });
 simInit();
