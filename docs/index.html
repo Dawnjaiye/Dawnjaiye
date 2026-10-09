@@ -155,7 +155,7 @@
 "use strict";
 /* ================= state ================= */
 const $=id=>document.getElementById(id);
-const GROUPS=["Warp","Time","Color","Look"];
+const GROUPS=["Warp","Time","Color","Look","Motion"];
 // [group,id,label,defaultOn,sliderDef|null]  sliderDef:[label,min,max,step,val,fmt]
 const FXDEF=[
  ["Warp","kaleido","Kaleido",true,["Segments",2,16,1,8,v=>v]],
@@ -176,6 +176,11 @@ const FXDEF=[
  ["Look","scan","Scanlines",false,["Scan",0,1,0.05,0.5,v=>v.toFixed(2)]],
  ["Look","grain","Grain",false,["Grain",0,1,0.05,0.5,v=>v.toFixed(2)]],
  ["Look","vig","Vignette",false,["Vig",0,1,0.05,0.6,v=>v.toFixed(2)]],
+ ["Motion","spin","Spin",false,["Spin",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","tunnel","Tunnel",false,["Tunnel",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","pulse","Pulse",false,["Pulse",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","flow","Flow",false,["Flow",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","drift","Drift",false,["Drift",0,2,0.05,1,v=>v.toFixed(2)]],
 ];
 const S={fx:{},mirrorMode:1,facing:"environment",motion:1,quality:1080,bitrate:16000000,
   reactor:false,rFeed:0.014,rKill:0.054,rSpeed:6,rCamFeed:true};
@@ -200,6 +205,7 @@ uniform sampler2D uTex;
 uniform vec2 uRes,uCover,uTexel;
 uniform float uTime;
 uniform float uKSeg,uMirror,uSwirl,uBulge,uWave,uPixel;
+uniform float uSpin,uTunnel,uPulse,uFlow,uDrift;
 uniform float uGlitch,uVHS;
 uniform float uRGB,uHue,uPoster,uDuo,uInvert;
 uniform float uEdge,uScan,uGrain,uVig;
@@ -245,6 +251,35 @@ void main(){
   if(uWave>0.001){
     uv.x+=sin(uv.y*24.0+t*3.0)*0.022*uWave;
     uv.y+=cos(uv.x*20.0-t*2.2)*0.022*uWave;
+  }
+  if(uSpin>0.001){
+    vec2 c=uv-0.5;
+    float a=t*0.9*uSpin;
+    float s=sin(a),co=cos(a);
+    uv=vec2(co*c.x-s*c.y,s*c.x+co*c.y)+0.5;
+  }
+  if(uTunnel>0.001){
+    vec2 c=uv-0.5; float r=length(c);
+    float puls=1.0+0.32*uTunnel*sin(t*2.2*uTunnel-r*9.0);
+    uv=c*puls+0.5;
+  }
+  if(uPulse>0.001){
+    vec2 c=uv-0.5; float r=max(length(c),1e-4);
+    float w=sin(r*30.0-t*4.5*uPulse)*0.035*uPulse;
+    uv+=c/r*w;
+  }
+  if(uFlow>0.001){
+    vec2 p=uv*3.0;
+    float n1=sin(p.x*2.1+t*0.7)+sin(p.y*1.7-t*0.5)+sin((p.x+p.y)*1.3+t*0.3);
+    float n2=cos(p.x*1.9-t*0.6)+cos(p.y*2.3+t*0.4)+cos((p.x-p.y)*1.1-t*0.2);
+    uv+=vec2(n1,n2)*0.028*uFlow;
+    vec2 q=uv*5.0-vec2(n1,n2)*0.8;
+    uv+=vec2(sin(q.y*2.0+t*1.1),cos(q.x*2.0-t*0.9))*0.014*uFlow;
+  }
+  if(uDrift>0.001){
+    float row=floor(uv.y*24.0);
+    float ph=hash(row*7.13)*6.2831;
+    uv.x+=sin(t*1.3*uDrift+ph)*0.07*uDrift;
   }
   if(uGlitch>0.001){
     float row=floor(uv.y*80.0);
@@ -345,6 +380,7 @@ function useQuad(p){
 }
 const fxP=prog(FS_FX,["uTex","uRes","uCover","uTexel","uTime",
   "uKSeg","uMirror","uSwirl","uBulge","uWave","uPixel",
+  "uSpin","uTunnel","uPulse","uFlow","uDrift",
   "uGlitch","uVHS","uRGB","uHue","uPoster","uDuo","uInvert",
   "uEdge","uScan","uGrain","uVig"]);
 const compP=prog(FS_COMP,["uCur","uPrev","uTAmt","uTZoom"]);
@@ -572,6 +608,11 @@ function drawFx(t){
   gl.uniform1f(U.uBulge,on("bulge"));
   gl.uniform1f(U.uWave,on("wave"));
   gl.uniform1f(U.uPixel,on("pixel"));
+  gl.uniform1f(U.uSpin,on("spin"));
+  gl.uniform1f(U.uTunnel,on("tunnel"));
+  gl.uniform1f(U.uPulse,on("pulse"));
+  gl.uniform1f(U.uFlow,on("flow"));
+  gl.uniform1f(U.uDrift,on("drift"));
   gl.uniform1f(U.uGlitch,on("glitch"));
   gl.uniform1f(U.uVHS,on("vhs"));
   gl.uniform1f(U.uRGB,on("rgb"));
