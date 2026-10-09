@@ -75,6 +75,43 @@
   </div>
 
   <div class="row">
+    <label>Source</label>
+    <div class="fx">
+      <button id="srcCam" aria-pressed="true">Camera</button>
+      <button id="srcReactor" aria-pressed="false">Reactor</button>
+    </div>
+  </div>
+  <div id="reactorPanel" style="display:none">
+    <div class="row">
+      <label>Feed</label>
+      <input type="range" id="sFeed" min="0.005" max="0.06" step="0.001" value="0.014">
+      <span class="val" id="vFeed">0.014</span>
+    </div>
+    <div class="row">
+      <label>Kill</label>
+      <input type="range" id="sKill" min="0.02" max="0.07" step="0.001" value="0.054">
+      <span class="val" id="vKill">0.054</span>
+    </div>
+    <div class="row">
+      <label>Speed</label>
+      <input type="range" id="sSpeed" min="1" max="16" step="1" value="6">
+      <span class="val" id="vSpeed">6</span>
+    </div>
+    <div class="row">
+      <button id="seedBtn">Seed burst</button>
+      <button id="camFeedBtn" aria-pressed="true">Camera feeds reactor</button>
+    </div>
+    <div class="row">
+      <label>Palette</label>
+      <div class="fx">
+        <button id="palInferno" aria-pressed="false">Inferno</button>
+        <button id="palGlacier" aria-pressed="true">Glacier</button>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#777;line-height:1.5">Tap the preview to splat cells. Feed/Kill morph the pattern family — low feed with mid kill grows the worm/maze look in your photo.</div>
+  </div>
+
+  <div class="row">
     <button id="flip">Flip camera</button>
     <button id="snap">Snapshot</button>
     <button id="rec" class="rec">Record</button>
@@ -140,7 +177,8 @@ const FXDEF=[
  ["Look","grain","Grain",false,["Grain",0,1,0.05,0.5,v=>v.toFixed(2)]],
  ["Look","vig","Vignette",false,["Vig",0,1,0.05,0.6,v=>v.toFixed(2)]],
 ];
-const S={fx:{},mirrorMode:1,facing:"environment",motion:1,quality:1080,bitrate:16000000};
+const S={fx:{},mirrorMode:1,facing:"environment",motion:1,quality:1080,bitrate:16000000,
+  reactor:false,rFeed:0.014,rKill:0.054,rSpeed:6,rCamFeed:true};
 FXDEF.forEach(d=>{S.fx[d[1]]={on:d[3],amt:d[4]?d[4][4]:0,def:d};});
 
 const nudgeEl=$("nudge");
@@ -330,7 +368,9 @@ function makeFBO(w,h){
   const fb=gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  const ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  if(!ok){gl.deleteFramebuffer(fb);gl.deleteTexture(tex);return null;}
   return {fb,tex};
 }
 let fxFBO=null,ping=null,pong=null,usePing=true;
@@ -353,8 +393,14 @@ function buildFBOs(){
   [fxFBO,ping,pong].forEach(o=>{if(o){gl.deleteFramebuffer(o.fb);gl.deleteTexture(o.tex);}});
   const w=canvas.width,h=canvas.height;
   fxFBO=makeFBO(w,h); ping=makeFBO(w,h); pong=makeFBO(w,h);
+  if((!fxFBO||!ping||!pong)&&S.fx.trails.on){
+    S.fx.trails.on=false;
+    const b=$("t_trails"); if(b)b.setAttribute("aria-pressed","false");
+    buildSliders(); nudge("Trails unavailable on this device");
+  }
   clearTrails();
 }
+function trailsReady(){return S.fx.trails.on&&fxFBO&&ping&&pong;}
 function bindTex(unit,tex){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex);}
 
 /* ================= camera / fallback source ================= */
@@ -362,7 +408,7 @@ const video=document.createElement("video");
 video.playsInline=true; video.muted=true; video.loop=true;
 let camW=1280, camH=720;
 let mode="pattern";
-let camGen=0, lastErr=null;
+let camGen=0, lastErr=null, stallCount=0;
 
 const pat=document.createElement("canvas"); pat.width=512; pat.height=288;
 const pctx=pat.getContext("2d");
@@ -402,6 +448,9 @@ async function refreshDiag(){
   }
   lines.push("last error: "+(lastErr?(lastErr.name+": "+(lastErr.message||"(no message)")):"none"));
   lines.push("mode: "+mode);
+  lines.push("video readyState: "+video.readyState+" ("+video.videoWidth+"x"+video.videoHeight+")");
+  lines.push("tracks: "+(video.srcObject?video.srcObject.getTracks().map(t=>t.kind+":"+t.readyState).join(", "):"none"));
+  lines.push("trails FBOs: "+(fxFBO&&ping&&pong?"ok":"unavailable"));
   el.innerHTML=lines.map(l=>String(l).replace(/</g,"&lt;")).join("<br>");
 }
 function withTimeout(p,ms){return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),ms))]);}
@@ -417,6 +466,13 @@ function describeErr(e){
 function stopLive(){
   if(video.srcObject){try{video.srcObject.getTracks().forEach(t=>t.stop());}catch(e){}video.srcObject=null;}
   try{video.pause();}catch(e){}
+}
+function onTrackEnded(){
+  if(mode!=="live")return;
+  mode="pattern"; stallCount=0;
+  setStatus("interrupted");
+  showCambar("The camera was interrupted (another app may have grabbed it). Tap Enable camera to restart.");
+  refreshDiag();
 }
 async function initCamera(){
   const gen=++camGen;
@@ -436,6 +492,8 @@ async function initCamera(){
       const stream=await withTimeout(navigator.mediaDevices.getUserMedia(SETS[i]),15000);
       if(gen!==camGen){stream.getTracks().forEach(t=>t.stop());return;}
       video.loop=false; video.srcObject=stream; await video.play();
+      stream.getTracks().forEach(t=>t.addEventListener("ended",onTrackEnded));
+      stallCount=0;
       camW=video.videoWidth||1280; camH=video.videoHeight||720;
       mode="live"; setStatus("live camera"); hideCambar(); nudge("Camera live — effects running");
       clearTrails(); refreshDiag(); return;
@@ -497,15 +555,16 @@ function uploadFrame(t){
 }
 function drawFx(t){
   useQuad(fxP);
-  bindTex(0,camTex);
+  bindTex(0,S.reactor?dispFBO.tex:camTex);
   const U=fxP.U,F=S.fx;
   const on=id=>F[id].on?F[id].amt:0;
   gl.uniform1i(U.uTex,0);
   gl.uniform2f(U.uRes,canvas.width,canvas.height);
-  const ca=camW/camH,sa=canvas.width/canvas.height;
+  const ca=S.reactor?16/9:camW/camH,sa=canvas.width/canvas.height;
   let cx=1,cy=1; if(sa>ca){cx=ca/sa;}else{cy=sa/ca;}
   gl.uniform2f(U.uCover,cx,cy);
-  gl.uniform2f(U.uTexel,1/camW,1/camH);
+  if(S.reactor) gl.uniform2f(U.uTexel,1/512,1/288);
+  else gl.uniform2f(U.uTexel,1/camW,1/camH);
   gl.uniform1f(U.uTime,t);
   gl.uniform1f(U.uKSeg,on("kaleido"));
   gl.uniform1f(U.uMirror,F.mirror.on?S.mirrorMode:0);
@@ -528,9 +587,11 @@ function drawFx(t){
 }
 function renderFrame(t){
   uploadFrame(t);
+  frameNo++;
+  if(S.reactor) stepReactor();
   const W=canvas.width,H=canvas.height;
   gl.viewport(0,0,W,H);
-  if(S.fx.trails.on){
+  if(trailsReady()){
     gl.bindFramebuffer(gl.FRAMEBUFFER,fxFBO.fb);
     drawFx(t);
     const tgt=usePing?ping:pong;
@@ -581,7 +642,7 @@ function toggleFx(id){
   const f=S.fx[id];f.on=!f.on;
   $("t_"+id).setAttribute("aria-pressed",f.on?"true":"false");
   if(id==="mirror")$("rowMirror").style.display=f.on?"flex":"none";
-  if(id==="trails"&&f.on)clearTrails();
+  if(id==="trails"&&f.on){if(!fxFBO||!ping||!pong){buildFBOs();}clearTrails();}
   buildSliders();
 }
 function buildSliders(){
@@ -654,6 +715,25 @@ $("rec").onclick=e=>{
 };
 
 /* ================= boot ================= */
+// camera watchdog: if we're "live" but no frames arrive, fall back visibly instead of black
+setInterval(()=>{
+  if(mode==="live"){
+    const flowing=video.readyState>=2&&video.videoWidth>0;
+    if(flowing){stallCount=0;return;}
+    if(++stallCount>=2){
+      stallCount=0; mode="pattern";
+      setStatus("stalled — no frames");
+      showCambar("The camera stopped sending frames. Tap Enable camera to restart it.");
+      refreshDiag();
+    }
+  }else{stallCount=0;}
+},3000);
+// graphics context loss: reload to rebuild (page is stateless)
+canvas.addEventListener("webglcontextlost",e=>{
+  e.preventDefault();
+  if(recorder){nudge("Graphics context lost — reload the page to continue");}
+  else{nudge("Graphics reset — reloading…");setTimeout(()=>location.reload(),1200);}
+});
 resize();
 buildSliders();
 addEventListener("resize",()=>{/* css handles display size; backing fixed by quality */});
@@ -662,3 +742,202 @@ requestAnimationFrame(loop);
 </script>
 </body>
 </html>
+
+<script>
+"use strict";
+/* ================= REACTOR — live Gray-Scott reaction-diffusion ================= */
+let frameNo=0;
+const seedQueue=[];
+const SIMR=256, DISPW=512, DISPH=288;
+
+const FS_SIM=`#version 300 es
+precision highp float;
+uniform sampler2D uSim,uCam;
+uniform vec2 uPx;
+uniform float uF,uK,uCamFeed;
+in vec2 vUv; out vec4 frag;
+void main(){
+  vec2 uv=vUv;
+  float u=texture(uSim,uv).r;
+  float v=texture(uSim,uv).g;
+  vec2 lap=
+     texture(uSim,uv+vec2(-uPx.x,-uPx.y)).rg*0.05
+    +texture(uSim,uv+vec2( 0.0  ,-uPx.y)).rg*0.20
+    +texture(uSim,uv+vec2( uPx.x,-uPx.y)).rg*0.05
+    +texture(uSim,uv+vec2(-uPx.x, 0.0  )).rg*0.20
+    +texture(uSim,uv                  ).rg*-1.0
+    +texture(uSim,uv+vec2( uPx.x, 0.0  )).rg*0.20
+    +texture(uSim,uv+vec2(-uPx.x, uPx.y)).rg*0.05
+    +texture(uSim,uv+vec2( 0.0  , uPx.y)).rg*0.20
+    +texture(uSim,uv+vec2( uPx.x, uPx.y)).rg*0.05;
+  float uvv=u*u*v;
+  u+=(lap.x-uvv+uF*(1.0-u));
+  v+=(0.5*lap.y+uvv-(uF+uK)*v);
+  if(uCamFeed>0.001){
+    float l=dot(texture(uCam,uv).rgb,vec3(0.299,0.587,0.114));
+    v+=max(0.0,l-0.55)*uCamFeed;
+  }
+  frag=vec4(clamp(u,0.0,1.0),clamp(v,0.0,1.0),0.0,1.0);
+}`;
+
+const FS_SEED=`#version 300 es
+precision highp float;
+uniform sampler2D uSim;
+uniform vec2 uPos; uniform float uR;
+in vec2 vUv; out vec4 frag;
+void main(){
+  vec4 s=texture(uSim,vUv);
+  vec2 d=vUv-uPos;
+  float m=exp(-dot(d,d)/(uR*uR));
+  frag=vec4(mix(s.r,0.25,m),mix(s.g,0.50,m),0.0,1.0);
+}`;
+
+const FS_DISP=`#version 300 es
+precision highp float;
+uniform sampler2D uSim;
+uniform float uSeg,uPal;
+in vec2 vUv; out vec4 frag;
+vec3 cmap(float v,float pal){
+  v=clamp(v*1.7,0.0,1.0);
+  vec3 c;
+  if(pal<0.5){
+    c=mix(vec3(0.004,0.006,0.03),vec3(0.02,0.12,0.55),smoothstep(0.0,0.35,v));
+    c=mix(c,vec3(0.05,0.65,0.85),smoothstep(0.35,0.62,v));
+    c=mix(c,vec3(0.75,1.0,0.18),smoothstep(0.62,0.85,v));
+    c=mix(c,vec3(1.0,1.0,0.92),smoothstep(0.85,1.0,v));
+  }else{
+    c=mix(vec3(0.002,0.004,0.03),vec3(0.03,0.10,0.55),smoothstep(0.0,0.35,v));
+    c=mix(c,vec3(0.10,0.35,1.0),smoothstep(0.35,0.62,v));
+    c=mix(c,vec3(0.35,0.85,1.0),smoothstep(0.62,0.85,v));
+    c=mix(c,vec3(0.95,1.0,1.0),smoothstep(0.85,1.0,v));
+  }
+  return c;
+}
+void main(){
+  vec2 uv=vUv;
+  if(uSeg>0.5){
+    vec2 c=uv-0.5; float r=length(c); float a=atan(c.y,c.x);
+    float sl=6.2831853/uSeg; a=mod(a,sl); a=abs(a-sl*0.5);
+    uv=vec2(cos(a),sin(a))*r+0.5;
+  }
+  float v=texture(uSim,uv).g;
+  frag=vec4(cmap(v,uPal),1.0);
+}`;
+
+const simP=prog(FS_SIM,["uSim","uCam","uPx","uF","uK","uCamFeed"]);
+const seedP=prog(FS_SEED,["uSim","uPos","uR"]);
+const dispP=prog(FS_DISP,["uSim","uSeg","uPal"]);
+
+function makeSimTarget(){
+  const extH=gl.getExtension("EXT_color_buffer_half_float");
+  const extF=gl.getExtension("EXT_color_buffer_float");
+  const tries=[];
+  if(extH)tries.push([gl.RGBA16F,gl.HALF_FLOAT]);
+  if(extF)tries.push([gl.RGBA32F,gl.FLOAT]);
+  tries.push([gl.RGBA8,gl.UNSIGNED_BYTE]);
+  for(const [fmt,type] of tries){
+    const tex=gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D,tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,fmt,SIMR,SIMR,0,gl.RGBA,type,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    const fb=gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+    if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE){
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      return {fb,tex};
+    }
+    gl.deleteFramebuffer(fb);gl.deleteTexture(tex);
+  }
+  throw new Error("no sim render target");
+}
+let simA=null,simB=null,simCur=0;
+const dispFBO=makeFBO(DISPW,DISPH);
+function seedAt(u,v,r){
+  const read=simCur===0?simA:simB, write=simCur===0?simB:simA;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,write.fb);
+  gl.viewport(0,0,SIMR,SIMR);
+  useQuad(seedP);
+  bindTex(0,read.tex);
+  gl.uniform1i(seedP.U.uSim,0);
+  gl.uniform2f(seedP.U.uPos,u,v);
+  gl.uniform1f(seedP.U.uR,r);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  simCur=1-simCur;
+}
+function simInit(){
+  simA=makeSimTarget(); simB=makeSimTarget(); simCur=0;
+  [simA,simB].forEach(o=>{
+    gl.bindFramebuffer(gl.FRAMEBUFFER,o.fb);
+    gl.clearColor(1,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  });
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  for(let i=0;i<14;i++) seedAt(Math.random(),Math.random(),0.028+Math.random()*0.02);
+}
+function stepReactor(){
+  while(seedQueue.length){const s=seedQueue.pop();seedAt(s[0],s[1],0.035);}
+  if(frameNo%240===0){for(let i=0;i<3;i++)seedAt(Math.random(),Math.random(),0.03);}
+  for(let i=0;i<S.rSpeed;i++){
+    const read=simCur===0?simA:simB, write=simCur===0?simB:simA;
+    gl.bindFramebuffer(gl.FRAMEBUFFER,write.fb);
+    gl.viewport(0,0,SIMR,SIMR);
+    useQuad(simP);
+    bindTex(0,read.tex); bindTex(1,camTex);
+    gl.uniform1i(simP.U.uSim,0); gl.uniform1i(simP.U.uCam,1);
+    gl.uniform2f(simP.U.uPx,1/SIMR,1/SIMR);
+    gl.uniform1f(simP.U.uF,S.rFeed); gl.uniform1f(simP.U.uK,S.rKill);
+    gl.uniform1f(simP.U.uCamFeed,(S.rCamFeed&&(mode==="live"||mode==="clip"))?0.9:0.0);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    simCur=1-simCur;
+  }
+  const cur=simCur===0?simA:simB;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dispFBO.fb);
+  gl.viewport(0,0,DISPW,DISPH);
+  useQuad(dispP);
+  bindTex(0,cur.tex);
+  gl.uniform1i(dispP.U.uSim,0);
+  gl.uniform1f(dispP.U.uSeg,S.fx.kaleido.on?S.fx.kaleido.amt:12);
+  gl.uniform1f(dispP.U.uPal,S.rPal);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+
+/* reactor UI */
+S.rPal=1; // 0 inferno (yellow), 1 glacier (blue) — video is blue
+$("srcCam").onclick=()=>{S.reactor=false;
+  $("srcCam").setAttribute("aria-pressed","true");
+  $("srcReactor").setAttribute("aria-pressed","false");
+  $("reactorPanel").style.display="none";};
+$("srcReactor").onclick=()=>{S.reactor=true;
+  $("srcCam").setAttribute("aria-pressed","false");
+  $("srcReactor").setAttribute("aria-pressed","true");
+  $("reactorPanel").style.display="block";
+  nudge("Reactor live — tap the preview to splat");};
+$("sFeed").oninput=e=>{S.rFeed=+e.target.value;$("vFeed").textContent=S.rFeed.toFixed(3);};
+$("sKill").oninput=e=>{S.rKill=+e.target.value;$("vKill").textContent=S.rKill.toFixed(3);};
+$("sSpeed").oninput=e=>{S.rSpeed=+e.target.value;$("vSpeed").textContent=S.rSpeed;};
+$("seedBtn").onclick=()=>{for(let i=0;i<6;i++)seedQueue.push([Math.random(),Math.random()]);nudge("Seeding…");};
+$("camFeedBtn").onclick=e=>{S.rCamFeed=!S.rCamFeed;
+  e.target.setAttribute("aria-pressed",S.rCamFeed?"true":"false");};
+$("palInferno").onclick=()=>{S.rPal=0;
+  $("palInferno").setAttribute("aria-pressed","true");
+  $("palGlacier").setAttribute("aria-pressed","false");};
+$("palGlacier").onclick=()=>{S.rPal=1;
+  $("palInferno").setAttribute("aria-pressed","false");
+  $("palGlacier").setAttribute("aria-pressed","true");};
+canvas.addEventListener("pointerdown",e=>{
+  if(!S.reactor)return;
+  const r=canvas.getBoundingClientRect();
+  const s=Math.min(r.width/16,r.height/9);
+  const dw=16*s,dh=9*s;
+  const ox=r.left+(r.width-dw)/2, oy=r.top+(r.height-dh)/2;
+  const u=(e.clientX-ox)/dw, v=1-(e.clientY-oy)/dh;
+  if(u>=0&&u<=1&&v>=0&&v<=1){seedQueue.push([u,v]);nudge("Splat",900);}
+});
+simInit();
+</script>
