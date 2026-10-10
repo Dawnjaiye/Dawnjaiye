@@ -47,12 +47,18 @@
   #cambar p { margin:0 0 10px; font-size:13px; line-height:1.5; color:#ddd; max-width:70vw; }
   #cambar .row { margin:0; justify-content:center; }
   #recTime { color:#f66; }
+  #exitPerform { position:fixed; right:14px; bottom:14px; z-index:60; display:none;
+    background:rgba(10,10,12,.55); color:#fff; border:1px solid #555; border-radius:20px;
+    padding:10px 20px; font-size:14px; opacity:.75; }
+  body.perform #panel { display:none; }
+  body.perform #exitPerform { display:block; }
 </style>
 </head>
 <body>
 <canvas id="view"></canvas>
 <div id="nudge"></div>
 <div id="cambar"><p id="cambarMsg"></p><div class="row"><button id="camRetry" class="primary">Enable camera</button></div></div>
+<button id="exitPerform">Exit</button>
 
 <div id="panel">
   <div id="grab"></div>
@@ -79,6 +85,7 @@
     <div class="fx">
       <button id="srcCam" aria-pressed="true">Camera</button>
       <button id="srcReactor" aria-pressed="false">Reactor</button>
+      <button id="srcViz" aria-pressed="false">Visualizer</button>
     </div>
   </div>
   <div id="reactorPanel" style="display:none">
@@ -116,6 +123,7 @@
     <button id="rotBtn">Rotate</button>
     <button id="snap">Snapshot</button>
     <button id="rec" class="rec">Record</button>
+    <button id="performBtn">Perform</button>
     <span id="recTime" class="val"></span>
   </div>
 
@@ -149,7 +157,7 @@
     <div id="diagBody" style="margin-top:4px;line-height:1.6">—</div>
   </details>
 
-  <div id="hint">v3 — 18 live FX. Record captures at the selected quality (16:9) for projection mapping. Snapshot saves a PNG at full canvas resolution.</div>
+  <div id="hint">Source switches camera / reactor / visualizer. Perform hides the UI for fullscreen visuals. Record captures 16:9 at the selected quality.</div>
 </div>
 
 <script>
@@ -540,8 +548,6 @@ function drawPattern(t){
     rg.addColorStop(0,`hsla(${hue},90%,65%,.95)`); rg.addColorStop(1,"hsla(0,0%,0%,0)");
     pctx.fillStyle=rg; pctx.beginPath(); pctx.arc(x,y,Math.abs(r)+4,0,7); pctx.fill();
   }
-  pctx.fillStyle="rgba(255,255,255,.9)"; pctx.font="bold 22px sans-serif";
-  pctx.fillText("PRISM CAM — test pattern",18,34);
 }
 
 const cambar=$("cambar"), cambarMsg=$("cambarMsg");
@@ -624,8 +630,8 @@ async function initCamera(){
   showCambar("Camera didn't come through ("+why+"). Tap Enable camera to retry, or Take photo / Record clip below — they use your phone's own camera app.");
   refreshDiag();
 }
-$("camRetry").onclick=async()=>{hideCambar();await initCamera();};
-$("retryCam").onclick=async()=>{await initCamera();};
+$("camRetry").onclick=async()=>{hideCambar();setSource("camera");};
+$("retryCam").onclick=async()=>{setSource("camera");};
 $("flip").onclick=async()=>{S.facing=S.facing==="environment"?"user":"environment";await initCamera();};
 $("rotBtn").onclick=()=>{S.rot=((S.rot||0)+1)%4;nudge("Rotation: "+(S.rot*90)+"°");};
 
@@ -1057,15 +1063,37 @@ function stepReactor(){
 /* reactor UI */
 S.rPal=1; // 0 inferno (yellow), 1 glacier (blue) — video is blue
 S.rot=0; // camera rotation in quarter turns
-$("srcCam").onclick=()=>{S.reactor=false;
-  $("srcCam").setAttribute("aria-pressed","true");
-  $("srcReactor").setAttribute("aria-pressed","false");
-  $("reactorPanel").style.display="none";};
-$("srcReactor").onclick=()=>{S.reactor=true;
-  $("srcCam").setAttribute("aria-pressed","false");
-  $("srcReactor").setAttribute("aria-pressed","true");
-  $("reactorPanel").style.display="block";
-  nudge("Reactor live — tap the preview to splat");};
+S.source="camera";
+function setSource(name){
+  S.source=name;
+  S.reactor=(name==="reactor");
+  $("srcCam").setAttribute("aria-pressed",name==="camera"?"true":"false");
+  $("srcReactor").setAttribute("aria-pressed",name==="reactor"?"true":"false");
+  $("srcViz").setAttribute("aria-pressed",name==="visualizer"?"true":"false");
+  $("reactorPanel").style.display=name==="reactor"?"block":"none";
+  if(name==="camera"){
+    if(mode!=="live")initCamera();
+  }else if(name==="visualizer"){
+    stopLive(); mode="pattern"; stallCount=0;
+    setStatus("visualizer"); hideCambar();
+    nudge("Visualizer — generative feed, no camera");
+  }else{
+    nudge("Reactor live — tap the preview to splat");
+  }
+}
+$("srcCam").onclick=()=>setSource("camera");
+$("srcReactor").onclick=()=>setSource("reactor");
+$("srcViz").onclick=()=>setSource("visualizer");
+$("performBtn").onclick=()=>{
+  document.body.classList.add("perform");
+  const el=document.documentElement;
+  if(el.requestFullscreen)el.requestFullscreen().catch(()=>{});
+  nudge("Perform mode — tap Exit to return");
+};
+$("exitPerform").onclick=()=>{
+  document.body.classList.remove("perform");
+  if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
+};
 $("sFeed").oninput=e=>{S.rFeed=+e.target.value;$("vFeed").textContent=S.rFeed.toFixed(3);};
 $("sKill").oninput=e=>{S.rKill=+e.target.value;$("vKill").textContent=S.rKill.toFixed(3);};
 $("sSpeed").oninput=e=>{S.rSpeed=+e.target.value;$("vSpeed").textContent=S.rSpeed;};
