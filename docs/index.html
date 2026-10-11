@@ -81,12 +81,33 @@
   </div>
 
   <div class="row">
-    <label>Source</label>
+    <label>Deck A</label>
     <div class="fx">
-      <button id="srcCam" aria-pressed="true">Camera</button>
-      <button id="srcReactor" aria-pressed="false">Reactor</button>
-      <button id="srcViz" aria-pressed="false">Visualizer</button>
+      <button data-deck="A" data-src="camera" aria-pressed="true">Cam</button>
+      <button data-deck="A" data-src="visualizer" aria-pressed="false">Viz</button>
+      <button data-deck="A" data-src="media" aria-pressed="false">Media</button>
+      <button data-deck="A" data-src="reactor" aria-pressed="false">Reactor</button>
     </div>
+  </div>
+  <div class="row">
+    <label>Deck B</label>
+    <div class="fx">
+      <button data-deck="B" data-src="camera" aria-pressed="false">Cam</button>
+      <button data-deck="B" data-src="visualizer" aria-pressed="true">Viz</button>
+      <button data-deck="B" data-src="media" aria-pressed="false">Media</button>
+      <button data-deck="B" data-src="reactor" aria-pressed="false">Reactor</button>
+    </div>
+  </div>
+  <div class="row">
+    <label>X-Fade</label>
+    <input type="range" id="sXfade" min="0" max="1" step="0.01" value="0">
+    <span class="val" id="vXfade">A</span>
+  </div>
+  <div class="row">
+    <button id="loadImgBtn">Load image</button>
+    <button id="loadVidBtn">Load video</button>
+    <input type="file" id="medImg" accept="image/*" class="filein">
+    <input type="file" id="medVid" accept="video/*" class="filein">
   </div>
   <div id="reactorPanel" style="display:none">
     <div class="row">
@@ -157,7 +178,7 @@
     <div id="diagBody" style="margin-top:4px;line-height:1.6">—</div>
   </details>
 
-  <div id="hint">Source switches camera / reactor / visualizer. Perform hides the UI for fullscreen visuals. Record captures 16:9 at the selected quality.</div>
+  <div id="hint">Deck A/B pick Cam, Viz, Media or Reactor — X-Fade blends them live. Load image/video for the Media deck. Perform hides the UI for fullscreen visuals.</div>
 </div>
 
 <script>
@@ -470,6 +491,20 @@ const fxP=prog(FS_FX,["uTex","uRes","uCover","uTexel","uTime",
   "uGlitch","uVHS","uRGB","uHue","uPoster","uDuo","uInvert","uPrism","uPlasma",
   "uEdge","uScan","uGrain","uVig","uRays","uStars","uHalftone"]);
 const compP=prog(FS_COMP,["uCur","uPrev","uTAmt","uTZoom","uFRot"]);
+
+const FS_MIX=`#version 300 es
+precision highp float;
+uniform sampler2D uA,uB;
+uniform vec2 uCoverA,uCoverB;
+uniform float uMix;
+in vec2 vUv; out vec4 frag;
+void main(){
+  vec3 a=texture(uA,(vUv-0.5)*uCoverA+0.5).rgb;
+  vec3 b=texture(uB,(vUv-0.5)*uCoverB+0.5).rgb;
+  frag=vec4(mix(a,b,clamp(uMix,0.0,1.0)),1.0);
+}`;
+const mixP=prog(FS_MIX,["uA","uB","uCoverA","uCoverB","uMix"]);
+let mixFBO=null;
 const blitP=prog(FS_BLIT,["uT"]);
 
 const camTex=gl.createTexture();
@@ -478,6 +513,20 @@ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+function makeTex(){
+  const t=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  return t;
+}
+const vizTex=makeTex(), medTex=makeTex();
+// loaded media (image or looping video) for the Media deck source
+let mediaType=null, mediaImg=null, medW=512, medH=288;
+const mediaVideo=document.createElement("video");
+mediaVideo.playsInline=true; mediaVideo.muted=true; mediaVideo.loop=true;
 
 function makeFBO(w,h){
   const tex=gl.createTexture();
@@ -512,9 +561,9 @@ function clearTrails(){
   prevTex=blackTex;
 }
 function buildFBOs(){
-  [fxFBO,ping,pong].forEach(o=>{if(o){gl.deleteFramebuffer(o.fb);gl.deleteTexture(o.tex);}});
+  [fxFBO,ping,pong,mixFBO].forEach(o=>{if(o){gl.deleteFramebuffer(o.fb);gl.deleteTexture(o.tex);}});
   const w=canvas.width,h=canvas.height;
-  fxFBO=makeFBO(w,h); ping=makeFBO(w,h); pong=makeFBO(w,h);
+  fxFBO=makeFBO(w,h); ping=makeFBO(w,h); pong=makeFBO(w,h); mixFBO=makeFBO(w,h);
   if((!fxFBO||!ping||!pong)&&S.fx.trails.on){
     S.fx.trails.on=false;
     const b=$("t_trails"); if(b)b.setAttribute("aria-pressed","false");
@@ -630,8 +679,10 @@ async function initCamera(){
   showCambar("Camera didn't come through ("+why+"). Tap Enable camera to retry, or Take photo / Record clip below — they use your phone's own camera app.");
   refreshDiag();
 }
-$("camRetry").onclick=async()=>{hideCambar();setSource("camera");};
-$("retryCam").onclick=async()=>{setSource("camera");};
+$("camRetry").onclick=async()=>{hideCambar();await initCamera();
+  if(S.deckA!=="camera"&&S.deckB!=="camera")setDeck("A","camera");};
+$("retryCam").onclick=async()=>{await initCamera();
+  if(S.deckA!=="camera"&&S.deckB!=="camera")setDeck("A","camera");};
 $("flip").onclick=async()=>{S.facing=S.facing==="environment"?"user":"environment";await initCamera();};
 $("rotBtn").onclick=()=>{S.rot=((S.rot||0)+1)%4;nudge("Rotation: "+(S.rot*90)+"°");};
 
@@ -662,35 +713,59 @@ $("capClip").addEventListener("change",e=>{
 });
 
 /* ================= render ================= */
-function uploadFrame(t){
-  bindTex(0,camTex);
+let upDone={};
+function uploadCamera(){
+  if(upDone.cam)return; upDone.cam=true;
+  gl.bindTexture(gl.TEXTURE_2D,camTex);
   if((mode==="live"||mode==="clip")&&video.readyState>=2){
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,video);
+    camW=video.videoWidth||1280; camH=video.videoHeight||720;
   }else if(mode==="photo"&&photoCan.width>0){
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,photoCan);
     camW=photoCan.width; camH=photoCan.height;
   }else{
-    drawPattern(t*1000); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,pat);
-    camW=pat.width; camH=pat.height;
+    drawPattern(simT*1000);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,pat);
+    camW=512; camH=288;
   }
+}
+function coverFor(w,h,W,H){
+  const ca=w/h, sa=W/H;
+  let cx=1,cy=1; if(sa>ca)cx=ca/sa; else cy=sa/ca;
+  return [cx,cy];
+}
+function getDeckTex(deck){
+  const src=deck==="A"?S.deckA:S.deckB;
+  if(src==="camera"){ uploadCamera(); return {tex:camTex,w:camW,h:camH}; }
+  if(src==="visualizer"){
+    if(!upDone.viz){ upDone.viz=true;
+      drawPattern(simT*1000);
+      gl.bindTexture(gl.TEXTURE_2D,vizTex);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,pat);
+    }
+    return {tex:vizTex,w:512,h:288};
+  }
+  if(src==="media"){
+    if(mediaType==="video"&&mediaVideo.readyState>=2){
+      gl.bindTexture(gl.TEXTURE_2D,medTex);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,mediaVideo);
+      medW=mediaVideo.videoWidth||medW; medH=mediaVideo.videoHeight||medH;
+    }
+    return {tex:medTex,w:medW,h:medH};
+  }
+  return {tex:dispFBO.tex,w:512,h:288}; // reactor
 }
 function drawFx(t){
   useQuad(fxP);
-  bindTex(0,S.reactor?dispFBO.tex:camTex);
+  bindTex(0,mixFBO.tex);
   const U=fxP.U,F=S.fx;
   const on=id=>F[id].on?F[id].amt:0;
   gl.uniform1i(U.uTex,0);
   gl.uniform2f(U.uRes,canvas.width,canvas.height);
-  const rot=S.rot||0, swap=rot===1||rot===3;
-  const ca0=S.reactor?16/9:camW/camH;
-  const ca=swap?1/ca0:ca0, sa=canvas.width/canvas.height;
-  let cx=1,cy=1; if(sa>ca){cx=ca/sa;}else{cy=sa/ca;}
-  gl.uniform2f(U.uCover,cx,cy);
-  let tx=S.reactor?512:camW, ty=S.reactor?288:camH;
-  if(swap){const tmp=tx;tx=ty;ty=tmp;}
-  gl.uniform2f(U.uTexel,1/tx,1/ty);
+  gl.uniform2f(U.uCover,1,1);
+  gl.uniform2f(U.uTexel,1/canvas.width,1/canvas.height);
   gl.uniform1f(U.uTime,t);
-  gl.uniform1f(U.uRot,rot);
+  gl.uniform1f(U.uRot,S.rot||0);
   gl.uniform1f(U.uKSeg,on("kaleido"));
   gl.uniform1f(U.uMirror,F.mirror.on?S.mirrorMode:0);
   gl.uniform1f(U.uSwirl,on("swirl"));
@@ -722,11 +797,26 @@ function drawFx(t){
   gl.drawArrays(gl.TRIANGLES,0,3);
 }
 function renderFrame(t){
-  uploadFrame(t);
   frameNo++;
-  if(S.reactor) stepReactor();
+  upDone={};
   const W=canvas.width,H=canvas.height;
+  // reactor's camera-feed needs camTex even when camera isn't on a deck
+  if(reactorActive()&&S.rCamFeed&&(mode==="live"||mode==="clip")
+     &&S.deckA!=="camera"&&S.deckB!=="camera") uploadCamera();
+  const A=getDeckTex("A"), B=getDeckTex("B");
+  if(reactorActive()) stepReactor();
   gl.viewport(0,0,W,H);
+  // mix decks -> mixFBO
+  gl.bindFramebuffer(gl.FRAMEBUFFER,mixFBO.fb);
+  useQuad(mixP);
+  bindTex(0,A.tex); bindTex(1,B.tex);
+  gl.uniform1i(mixP.U.uA,0); gl.uniform1i(mixP.U.uB,1);
+  const cA=coverFor(A.w,A.h,W,H), cB=coverFor(B.w,B.h,W,H);
+  gl.uniform2f(mixP.U.uCoverA,cA[0],cA[1]);
+  gl.uniform2f(mixP.U.uCoverB,cB[0],cB[1]);
+  gl.uniform1f(mixP.U.uMix,S.xfade);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   if(trailsReady()){
     gl.bindFramebuffer(gl.FRAMEBUFFER,fxFBO.fb);
     drawFx(t);
@@ -1063,27 +1153,51 @@ function stepReactor(){
 /* reactor UI */
 S.rPal=1; // 0 inferno (yellow), 1 glacier (blue) — video is blue
 S.rot=0; // camera rotation in quarter turns
-S.source="camera";
-function setSource(name){
-  S.source=name;
-  S.reactor=(name==="reactor");
-  $("srcCam").setAttribute("aria-pressed",name==="camera"?"true":"false");
-  $("srcReactor").setAttribute("aria-pressed",name==="reactor"?"true":"false");
-  $("srcViz").setAttribute("aria-pressed",name==="visualizer"?"true":"false");
-  $("reactorPanel").style.display=name==="reactor"?"block":"none";
-  if(name==="camera"){
-    if(mode!=="live")initCamera();
-  }else if(name==="visualizer"){
-    stopLive(); mode="pattern"; stallCount=0;
-    setStatus("visualizer"); hideCambar();
-    nudge("Visualizer — generative feed, no camera");
-  }else{
-    nudge("Reactor live — tap the preview to splat");
-  }
+S.deckA="camera"; S.deckB="visualizer"; S.xfade=0;
+function reactorActive(){return S.deckA==="reactor"||S.deckB==="reactor";}
+function syncCamera(){
+  const need=S.deckA==="camera"||S.deckB==="camera"||(reactorActive()&&S.rCamFeed);
+  if(need){ if(mode!=="live")initCamera(); }
+  else if(video.srcObject){ stopLive(); mode="pattern"; stallCount=0; setStatus("camera idle"); }
 }
-$("srcCam").onclick=()=>setSource("camera");
-$("srcReactor").onclick=()=>setSource("reactor");
-$("srcViz").onclick=()=>setSource("visualizer");
+function setDeck(deck,src){
+  if(deck==="A")S.deckA=src; else S.deckB=src;
+  document.querySelectorAll('[data-deck="'+deck+'"]').forEach(b=>
+    b.setAttribute("aria-pressed",b.dataset.src===src?"true":"false"));
+  $("reactorPanel").style.display=reactorActive()?"block":"none";
+  if(src==="media"&&!mediaType)nudge("Load an image or video first");
+  if(src==="reactor")nudge("Reactor live — tap the preview to splat");
+  syncCamera();
+}
+document.querySelectorAll("[data-deck]").forEach(b=>{
+  b.onclick=()=>setDeck(b.dataset.deck,b.dataset.src);
+});
+$("sXfade").oninput=e=>{S.xfade=+e.target.value;
+  $("vXfade").textContent=S.xfade<0.05?"A":S.xfade>0.95?"B":Math.round(S.xfade*100)+"%";};
+// media loading
+$("loadImgBtn").onclick=()=>$("medImg").click();
+$("loadVidBtn").onclick=()=>$("medVid").click();
+$("medImg").addEventListener("change",e=>{
+  const f=e.target.files&&e.target.files[0]; e.target.value=""; if(!f)return;
+  const url=URL.createObjectURL(f); const img=new Image();
+  img.onload=()=>{ mediaImg=img; mediaType="image";
+    try{mediaVideo.pause();mediaVideo.removeAttribute("src");mediaVideo.load();}catch(_){}
+    gl.bindTexture(gl.TEXTURE_2D,medTex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+    medW=img.naturalWidth||512; medH=img.naturalHeight||288;
+    setDeck("A","media"); nudge("Image loaded — on Deck A"); };
+  img.onerror=()=>{URL.revokeObjectURL(url);nudge("Couldn't read that image");};
+  img.src=url;
+});
+$("medVid").addEventListener("change",e=>{
+  const f=e.target.files&&e.target.files[0]; e.target.value=""; if(!f)return;
+  mediaImg=null; mediaType="video";
+  mediaVideo.src=URL.createObjectURL(f);
+  mediaVideo.play().then(()=>{
+    medW=mediaVideo.videoWidth||512; medH=mediaVideo.videoHeight||288;
+    setDeck("A","media"); nudge("Video loaded — on Deck A, looping");
+  }).catch(()=>nudge("Couldn't play that video"));
+});
 $("performBtn").onclick=()=>{
   document.body.classList.add("perform");
   const el=document.documentElement;
@@ -1099,7 +1213,7 @@ $("sKill").oninput=e=>{S.rKill=+e.target.value;$("vKill").textContent=S.rKill.to
 $("sSpeed").oninput=e=>{S.rSpeed=+e.target.value;$("vSpeed").textContent=S.rSpeed;};
 $("seedBtn").onclick=()=>{for(let i=0;i<6;i++)seedQueue.push([Math.random(),Math.random()]);nudge("Seeding…");};
 $("camFeedBtn").onclick=e=>{S.rCamFeed=!S.rCamFeed;
-  e.target.setAttribute("aria-pressed",S.rCamFeed?"true":"false");};
+  e.target.setAttribute("aria-pressed",S.rCamFeed?"true":"false");syncCamera();};
 $("palInferno").onclick=()=>{S.rPal=0;
   $("palInferno").setAttribute("aria-pressed","true");
   $("palGlacier").setAttribute("aria-pressed","false");};
@@ -1107,7 +1221,7 @@ $("palGlacier").onclick=()=>{S.rPal=1;
   $("palInferno").setAttribute("aria-pressed","false");
   $("palGlacier").setAttribute("aria-pressed","true");};
 canvas.addEventListener("pointerdown",e=>{
-  if(!S.reactor)return;
+  if(!reactorActive())return;
   const r=canvas.getBoundingClientRect();
   const rot=S.rot||0;
   const sa=r.width/r.height;
