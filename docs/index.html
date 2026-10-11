@@ -104,12 +104,6 @@
     <span class="val" id="vXfade">A</span>
   </div>
   <div class="row">
-    <label>Pad X</label>
-    <select id="padXSel"></select>
-    <label>Pad Y</label>
-    <select id="padYSel"></select>
-  </div>
-  <div class="row">
     <button id="loadImgBtn">Load image</button>
     <button id="loadVidBtn">Load video</button>
     <input type="file" id="medImg" accept="image/*" class="filein">
@@ -151,6 +145,7 @@
     <button id="snap">Snapshot</button>
     <button id="rec" class="rec">Record</button>
     <button id="performBtn">Perform</button>
+    <button id="remixBtn">Remix</button>
     <span id="recTime" class="val"></span>
   </div>
 
@@ -184,7 +179,7 @@
     <div id="diagBody" style="margin-top:4px;line-height:1.6">—</div>
   </details>
 
-  <div id="hint">Deck A/B pick Cam, Viz, Media or Reactor — X-Fade blends them live. Perform hides the UI: drag to play the XY pad, double-tap to auto-fade decks.</div>
+  <div id="hint">Deck A/B pick Cam, Viz, Media or Reactor — X-Fade blends them live. Perform hides the UI: tap to remix the look, double-tap to auto-fade decks.</div>
 </div>
 
 <script>
@@ -1180,29 +1175,42 @@ document.querySelectorAll("[data-deck]").forEach(b=>{
 });
 function updXfadeLabel(){$("vXfade").textContent=S.xfade<0.05?"A":S.xfade>0.95?"B":Math.round(S.xfade*100)+"%";}
 $("sXfade").oninput=e=>{S.xfade=+e.target.value;updXfadeLabel();};
-// perform pad: assignable X/Y targets
-const PAD_TARGETS=[
- ["xfade","X-Fade"],["motion","Motion speed"],
- ["kaleido","Kaleido"],["spin","Spin"],["tunnel","Tunnel"],["pulse","Pulse"],
- ["flow","Flow"],["feedback","Feedback"],["hue","Hue cycle"],["glitch","Glitch"],
- ["rgb","RGB split"],["plasma","Plasma"],["rays","Rays"],["stars","Starfield"]
+// tap-to-remix: reshuffles the FX stack with tasteful random amounts
+const REMIX_POOL=[
+ ["kaleido",3,12,1],["spin",0.3,1.5],["tunnel",0.4,1.5],["pulse",0.4,1.5],
+ ["flow",0.4,1.5],["drift",0.4,1.2],["shake",0.3,1],["swirl",2,7],
+ ["bulge",0.5,1.5],["wave",0.3,1.2],["pixel",20,80,1],["glitch",0.02,0.15],
+ ["vhs",0.4,1],["rgb",0.005,0.03],["hue",0.3,1.5],["poster",3,6,1],
+ ["duo",0.5,1],["prism",0.4,1.5],["plasma",0.4,1.2],["edge",0.3,0.9],
+ ["scan",0.3,1],["grain",0.2,0.8],["vig",0.3,0.8],["rays",0.4,1.2],
+ ["stars",0.4,1.2],["halftone",0.5,1.2],["feedback",0.4,0.85],["mirror",1,3,1]
 ];
-S.padX="xfade"; S.padY="spin";
-const padSelX=$("padXSel"), padSelY=$("padYSel");
-PAD_TARGETS.forEach(([v,l])=>{padSelX.add(new Option(l,v));padSelY.add(new Option(l,v));});
-padSelX.value=S.padX; padSelY.value=S.padY;
-padSelX.onchange=e=>S.padX=e.target.value;
-padSelY.onchange=e=>S.padY=e.target.value;
-const fxRange={}; FXDEF.forEach(d=>{if(d[4])fxRange[d[1]]=[d[4][1],d[4][2]];});
-function padSet(target,n01){
-  n01=Math.min(1,Math.max(0,n01));
-  if(target==="xfade"){S.xfade=n01;$("sXfade").value=n01;updXfadeLabel();}
-  else if(target==="motion"){S.motion=n01*3;$("sMotion").value=S.motion;$("vMotion").textContent=S.motion.toFixed(2);}
-  else if(fxRange[target]){
-    const f=S.fx[target],r=fxRange[target];
-    f.amt=r[0]+(r[1]-r[0])*n01;
-    if(!f.on){f.on=true;const b=$("t_"+target);if(b)b.setAttribute("aria-pressed","true");}
+function syncFxUI(){
+  Object.keys(S.fx).forEach(id=>{
+    const b=$("t_"+id); if(b)b.setAttribute("aria-pressed",S.fx[id].on?"true":"false");
+  });
+  const mm=S.mirrorMode||1;
+  document.querySelectorAll(".mbtn").forEach(b=>
+    b.setAttribute("aria-pressed",+b.dataset.m===mm?"true":"false"));
+  $("rowMirror").style.display=S.fx.mirror.on?"flex":"none";
+  buildSliders();
+  $("sMotion").value=S.motion; $("vMotion").textContent=(+S.motion).toFixed(2);
+}
+function remix(){
+  Object.values(S.fx).forEach(f=>f.on=false);
+  const n=2+Math.floor(Math.random()*3);
+  const pool=REMIX_POOL.slice(), picked=[];
+  for(let i=0;i<n&&pool.length;i++){
+    const [id,mn,mx,isInt]=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
+    picked.push(id);
+    if(id==="mirror"){S.fx.mirror.on=true;S.mirrorMode=Math.round(mn+Math.random()*(mx-mn));}
+    else{const f=S.fx[id];f.on=true;
+      const v=mn+Math.random()*(mx-mn);f.amt=isInt?Math.round(v):v;}
   }
+  S.motion=0.5+Math.random()*1.8;
+  syncFxUI();
+  const names=picked.map(id=>{const d=FXDEF.find(x=>x[1]===id);return d?d[2]:id;});
+  nudge("Remix: "+names.join(" + "));
 }
 // media loading
 $("loadImgBtn").onclick=()=>$("medImg").click();
@@ -1239,6 +1247,7 @@ $("exitPerform").onclick=()=>{
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
   buildSliders();
 };
+$("remixBtn").onclick=()=>{remix();if(reactorActive())seedAtClient(innerWidth/2,innerHeight/2);};
 $("sFeed").oninput=e=>{S.rFeed=+e.target.value;$("vFeed").textContent=S.rFeed.toFixed(3);};
 $("sKill").oninput=e=>{S.rKill=+e.target.value;$("vKill").textContent=S.rKill.toFixed(3);};
 $("sSpeed").oninput=e=>{S.rSpeed=+e.target.value;$("vSpeed").textContent=S.rSpeed;};
@@ -1264,7 +1273,7 @@ function seedAtClient(px,py){
   const u=qx*cx+0.5, v=qy*cy+0.5;
   if(u>=0&&u<=1&&v>=0&&v<=1)seedQueue.push([u,v]);
 }
-let padDown=null, lastTapT=0, xfadeAnim=0;
+let lastTapT=0, xfadeAnim=0;
 function inPerform(){return document.body.classList.contains("perform");}
 function autoXfade(){
   const target=S.xfade<0.5?1:0, start=S.xfade, t0=performance.now();
@@ -1279,32 +1288,15 @@ function autoXfade(){
   xfadeAnim=requestAnimationFrame(step);
 }
 canvas.addEventListener("pointerdown",e=>{
-  if(inPerform()){
-    padDown={x:e.clientX,y:e.clientY,t:performance.now(),moved:false,id:e.pointerId};
-    try{canvas.setPointerCapture(e.pointerId);}catch(_){}
+  if(!inPerform()){
+    if(reactorActive()){seedAtClient(e.clientX,e.clientY);nudge("Splat",900);}
     return;
   }
-  if(reactorActive()){seedAtClient(e.clientX,e.clientY);nudge("Splat",900);}
-});
-canvas.addEventListener("pointermove",e=>{
-  if(!padDown||e.pointerId!==padDown.id)return;
-  if(Math.hypot(e.clientX-padDown.x,e.clientY-padDown.y)>10)padDown.moved=true;
-  if(!padDown.moved)return;
-  const r=canvas.getBoundingClientRect();
-  padSet(S.padX,(e.clientX-r.left)/r.width);
-  padSet(S.padY,1-(e.clientY-r.top)/r.height);
-});
-function endPad(e){
-  if(!padDown||e.pointerId!==padDown.id)return;
-  const wasTap=!padDown.moved&&(performance.now()-padDown.t)<350;
   const now=performance.now();
-  padDown=null;
-  if(!wasTap)return;
-  if(now-lastTapT<350)autoXfade();
+  if(now-lastTapT<350){lastTapT=now;autoXfade();return;}
   lastTapT=now;
-  if(reactorActive()){seedAtClient(e.clientX,e.clientY);nudge("Splat",900);}
-}
-canvas.addEventListener("pointerup",endPad);
-canvas.addEventListener("pointercancel",()=>{padDown=null;});
+  remix();
+  if(reactorActive())seedAtClient(e.clientX,e.clientY);
+});
 simInit();
 </script>
