@@ -934,25 +934,52 @@ $("snap").onclick=()=>{
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);});
   nudge("Snapshot saved ("+S.quality+"p)");
 };
-let recorder=null,chunks=[],recTimer=null,recStart=0;
+let recorder=null,chunks=[],recTimer=null,recStart=0,recAC=null;
+function pickMime(){
+  const cands=[
+    'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  return cands.find(m=>window.MediaRecorder&&MediaRecorder.isTypeSupported(m))||"";
+}
+function silentAudioStream(){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return null;
+    if(!recAC)recAC=new AC();
+    if(recAC.state==="suspended")recAC.resume();
+    const dest=recAC.createMediaStreamDestination();
+    const osc=recAC.createOscillator(), g=recAC.createGain();
+    g.gain.value=0; osc.connect(g); g.connect(dest);
+    osc.start(); osc.stop(recAC.currentTime+3600);
+    return dest.stream;
+  }catch(e){return null;}
+}
 $("rec").onclick=e=>{
   const btn=e.target;
   if(recorder){recorder.stop();return;}
   if(!window.MediaRecorder){nudge("Recording not supported in this browser");return;}
-  const stream=recCanvas.captureStream(30);
-  const mime=["video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"]
-    .find(m=>MediaRecorder.isTypeSupported(m));
+  const mime=pickMime();
   if(!mime){nudge("Recording not supported in this browser");return;}
+  const vstream=recCanvas.captureStream(30);
+  let stream=vstream;
+  const astream=silentAudioStream();
+  if(astream&&astream.getAudioTracks().length)
+    stream=new MediaStream([...vstream.getVideoTracks(),...astream.getAudioTracks()]);
+  const ext=mime.indexOf("mp4")>=0?"mp4":"webm";
   chunks=[];recorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:S.bitrate});
   recorder.ondataavailable=ev=>{if(ev.data.size)chunks.push(ev.data);};
   recorder.onstop=()=>{
     clearInterval(recTimer);$("recTime").textContent="";
     const blob=new Blob(chunks,{type:mime});
     const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);a.download="prism-cam-"+S.quality+"p.webm";a.click();
+    a.href=URL.createObjectURL(blob);a.download="prism-cam-"+S.quality+"p."+ext;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);
     recorder=null;btn.classList.remove("on");btn.textContent="Record";
-    nudge("Clip saved ("+S.quality+"p)");
+    nudge("Clip saved ("+S.quality+"p "+ext+")");
   };
   recorder.start();
   recStart=Date.now();
