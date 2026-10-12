@@ -677,7 +677,10 @@ async function initCamera(){
   mode="pattern";
   const why=describeErr(lastErr);
   setStatus("unavailable ("+why+")");
-  showCambar("Camera didn't come through ("+why+"). Tap Enable camera to retry, or Take photo / Record clip below — they use your phone's own camera app.");
+  const deniedHint=(lastErr&&lastErr.name==="NotAllowedError")
+    ?"If retrying does nothing, the browser is blocking it: tap the lock icon in the address bar → Permissions → Camera → Allow, then tap Enable camera. "
+    :"Tap Enable camera to retry. ";
+  showCambar("Camera didn't come through ("+why+"). "+deniedHint+"Or Take photo / Record clip below — they use your phone's own camera app.");
   refreshDiag();
 }
 $("camRetry").onclick=async()=>{hideCambar();await initCamera();
