@@ -180,7 +180,7 @@
     <div id="diagBody" style="margin-top:4px;line-height:1.6">—</div>
   </details>
 
-  <div id="hint">Deck A/B pick Cam, Viz, Media or Reactor — X-Fade blends them live. Perform hides the UI: tap to remix the look, double-tap to auto-fade decks.</div>
+  <div id="hint">Deck A/B pick Cam, Viz, Media or Reactor — X-Fade blends them live. Perform hides the UI: tap right for a new mix, left to go back, double-tap to auto-fade.</div>
 </div>
 
 <script>
@@ -220,6 +220,15 @@ const FXDEF=[
  ["Color","prism","Prism",false,["Prism",0,2,0.05,1,v=>v.toFixed(2)]],
  ["Color","plasma","Plasma",false,["Plasma",0,2,0.05,1,v=>v.toFixed(2)]],
  ["Look","halftone","Halftone",false,["Halftone",0,1.5,0.05,1,v=>v.toFixed(2)]],
+ ["Color","solar","Solarize",false,["Solar",0,1,0.05,0.7,v=>v.toFixed(2)]],
+ ["Color","colorama","Colorama",false,["Colorama",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Color","thresh","Threshold",false,["Thresh",0,1,0.05,0.5,v=>v.toFixed(2)]],
+ ["Look","voronoi","Voronoi",false,["Cells",2,10,0.5,5,v=>v.toFixed(1)]],
+ ["Look","zoomblur","Zoom blur",false,["Blur",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","julia","Julia",false,["Julia",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","melt","Melt",false,["Melt",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Time","slit","Slit scan",false,["Slit",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Time","rgbdelay","RGB delay",false,["Delay",0,1,0.05,0.8,v=>v.toFixed(2)]],
 ];
 const S={fx:{},mirrorMode:1,facing:"environment",motion:1,quality:1080,bitrate:16000000,
   reactor:false,rFeed:0.014,rKill:0.054,rSpeed:6,rCamFeed:true};
@@ -244,11 +253,11 @@ uniform sampler2D uTex;
 uniform vec2 uRes,uCover,uTexel;
 uniform float uTime;
 uniform float uKSeg,uMirror,uSwirl,uBulge,uWave,uPixel;
-uniform float uSpin,uTunnel,uPulse,uFlow,uDrift,uShake;
+uniform float uSpin,uTunnel,uPulse,uFlow,uDrift,uShake,uMelt;
 uniform float uRot;
 uniform float uGlitch,uVHS;
-uniform float uRGB,uHue,uPoster,uDuo,uInvert,uPrism,uPlasma;
-uniform float uEdge,uScan,uGrain,uVig,uRays,uStars,uHalftone;
+uniform float uRGB,uHue,uPoster,uDuo,uInvert,uPrism,uPlasma,uSolar,uColorama,uThresh;
+uniform float uEdge,uScan,uGrain,uVig,uRays,uStars,uHalftone,uVoronoi,uZoomBlur,uJulia;
 uniform float uEcho,uFeedback;
 in vec2 vUv; out vec4 frag;
 float hash(float n){return fract(sin(n*127.1)*43758.5453);}
@@ -334,6 +343,11 @@ void main(){
     vec2 sh=(vec2(hash2(vec2(st,1.7)),hash2(vec2(st,9.2)))-0.5)*0.055*uShake;
     uv+=sh;
   }
+  if(uMelt>0.001){
+    float stripes=sin(uv.x*90.0+t*2.0)*0.5+0.5;
+    float n=hash2(vec2(floor(uv.x*90.0),1.0));
+    uv.y-=(0.03+0.12*n*stripes)*uMelt*(0.5+0.5*sin(t*1.7+uv.x*20.0));
+  }
   if(uGlitch>0.001){
     float row=floor(uv.y*80.0);
     float tt=floor(t*10.0);
@@ -390,6 +404,22 @@ void main(){
     col=mix(col,mix(vec3(0.015,0.02,0.07),vec3(1.0,0.85,0.55),g),uDuo);
   }
   if(uInvert>0.001) col=mix(col,vec3(1.0)-col,uInvert);
+  if(uSolar>0.001){
+    float th=0.5+0.18*sin(t*1.3);
+    vec3 s=mix(col,vec3(1.0)-col,step(th,col));
+    col=mix(col,s,clamp(uSolar,0.0,1.0));
+  }
+  if(uThresh>0.001){
+    float l=dot(col,vec3(0.299,0.587,0.114));
+    float th=0.5+0.12*sin(t*0.9);
+    col=mix(col,vec3(step(th,l)),clamp(uThresh,0.0,1.0));
+  }
+  if(uColorama>0.001){
+    float l=dot(col,vec3(0.299,0.587,0.114));
+    float hue=fract(l*1.2+t*0.06*uColorama);
+    vec3 pal=0.5+0.5*cos(6.2831*(hue+vec3(0.0,0.33,0.67)));
+    col=mix(col,pal,clamp(uColorama*0.75,0.0,1.0));
+  }
   if(uEdge>0.001){
     vec2 e=uTexel;
     float tl=lumAt(uv+vec2(-e.x,-e.y)), tc=lumAt(uv+vec2(0.0,-e.y)), tr=lumAt(uv+vec2(e.x,-e.y));
@@ -400,6 +430,34 @@ void main(){
     float line=smoothstep(0.12,0.5,sqrt(gx*gx+gy*gy));
     vec3 glow=vec3(0.72,0.84,1.0)*(0.5+1.1*line);
     col=mix(col,col*0.10+glow*line,uEdge);
+  }
+  if(uZoomBlur>0.001){
+    vec2 c=uv-0.5;
+    vec3 acc=vec3(0.0);
+    float st=(0.02+0.02*sin(t*2.0))*uZoomBlur;
+    for(int i=0;i<8;i++){
+      float s=1.0-st*float(i);
+      acc+=texture(uTex,c*s+0.5).rgb;
+    }
+    col=mix(col,acc/8.0,clamp(uZoomBlur*0.8,0.0,1.0));
+  }
+  if(uVoronoi>0.001){
+    vec2 asp=vec2(uRes.x/uRes.y,1.0);
+    vec2 g=uv*uVoronoi*asp;
+    vec2 ip=floor(g), fp=fract(g);
+    float md=8.0; vec2 mr=vec2(0.0);
+    for(int yy=-1;yy<=1;yy++)for(int xx=-1;xx<=1;xx++){
+      vec2 o=vec2(float(xx),float(yy));
+      float ph1=hash2(ip+o), ph2=hash2(ip+o+7.3);
+      vec2 r=o+vec2(ph1,ph2)-fp;
+      r+=0.35*vec2(sin(t*0.8+6.2831*ph1),cos(t*0.7+6.2831*ph2));
+      float d=dot(r,r);
+      if(d<md){md=d;mr=ip+o;}
+    }
+    vec2 cellUV=(mr+vec2(0.5+0.35*sin(t*0.8),0.5+0.35*cos(t*0.7)))/(uVoronoi*asp);
+    vec3 vc=texture(uTex,cellUV).rgb;
+    vc+=vec3(0.12)*smoothstep(0.15,0.6,md);
+    col=mix(col,vc,clamp(uVoronoi*0.45,0.0,1.0));
   }
   if(uRays>0.001){
     vec2 c=uv-0.5; c.x*=uRes.x/uRes.y;
@@ -440,6 +498,20 @@ void main(){
     vec3 ht=mix(vec3(0.94,0.93,0.90),vec3(0.03,0.03,0.06),ink);
     col=mix(col,ht,clamp(uHalftone,0.0,1.0));
   }
+  if(uJulia>0.001){
+    vec2 p=(uv-0.5)*2.4; p.x*=uRes.x/uRes.y;
+    vec2 cc=vec2(-0.8+0.15*sin(t*0.23),0.156+0.1*cos(t*0.31));
+    vec2 z=p; float it=0.0;
+    for(int i=0;i<24;i++){
+      if(dot(z,z)>4.0)break;
+      z=vec2(z.x*z.x-z.y*z.y,2.0*z.x*z.y)+cc;
+      it+=1.0;
+    }
+    float m=it/24.0;
+    vec3 jc=mix(vec3(0.04,0.08,0.28),vec3(0.35,0.85,1.0),m);
+    jc=mix(jc,vec3(1.0,0.62,0.25),smoothstep(0.65,1.0,m));
+    col=mix(col,jc,0.5*clamp(uJulia,0.0,1.5));
+  }
   if(uScan>0.001) col*=1.0-uScan*0.22*(0.5+0.5*sin(vUv.y*uRes.y*3.14159));
   if(uGrain>0.001) col+=(hash2(vUv*913.7+fract(t)*7.31)-0.5)*0.28*uGrain;
   if(uVig>0.001){vec2 vc=vUv-0.5; col*=1.0-uVig*1.1*dot(vc,vc);}
@@ -449,15 +521,21 @@ void main(){
 const FS_COMP=`#version 300 es
 precision highp float;
 uniform sampler2D uCur,uPrev;
-uniform float uTAmt,uTZoom,uFRot;
+uniform float uTAmt,uTZoom,uFRot,uTimeC,uSlit,uRGBD;
 in vec2 vUv; out vec4 frag;
 void main(){
   vec3 cur=texture(uCur,vUv).rgb;
   vec2 c=vUv-0.5;
   float s=sin(uFRot),co=cos(uFRot);
   vec2 puv=vec2(co*c.x-s*c.y,s*c.x+co*c.y)*(1.0+uTZoom)+0.5;
+  puv.y-=0.0035*uSlit;
   vec3 prv=texture(uPrev,clamp(puv,0.002,0.998)).rgb;
-  frag=vec4(mix(cur,prv,uTAmt),1.0);
+  float slitBand=smoothstep(0.06,0.015,abs(vUv.y-(0.5+0.35*sin(uTimeC*0.6))));
+  vec3 fb=mix(prv,cur,slitBand*clamp(uSlit,0.0,1.0));
+  vec3 rgbd=mix(cur,vec3(cur.r,prv.g,prv.b),clamp(uRGBD,0.0,1.0));
+  vec3 mixed=mix(cur,fb,clamp(uTAmt,0.0,0.97));
+  mixed=mix(mixed,rgbd,clamp(uRGBD,0.0,1.0)*0.85);
+  frag=vec4(mixed,1.0);
 }`;
 
 const FS_BLIT=`#version 300 es
@@ -489,10 +567,11 @@ function useQuad(p){
 }
 const fxP=prog(FS_FX,["uTex","uRes","uCover","uTexel","uTime",
   "uKSeg","uMirror","uSwirl","uBulge","uWave","uPixel",
-  "uSpin","uTunnel","uPulse","uFlow","uDrift","uShake","uRot",
+  "uSpin","uTunnel","uPulse","uFlow","uDrift","uShake","uMelt","uRot",
   "uGlitch","uVHS","uRGB","uHue","uPoster","uDuo","uInvert","uPrism","uPlasma",
-  "uEdge","uScan","uGrain","uVig","uRays","uStars","uHalftone"]);
-const compP=prog(FS_COMP,["uCur","uPrev","uTAmt","uTZoom","uFRot"]);
+  "uSolar","uColorama","uThresh",
+  "uEdge","uScan","uGrain","uVig","uRays","uStars","uHalftone","uVoronoi","uZoomBlur","uJulia"]);
+const compP=prog(FS_COMP,["uCur","uPrev","uTAmt","uTZoom","uFRot","uTimeC","uSlit","uRGBD"]);
 
 const FS_MIX=`#version 300 es
 precision highp float;
@@ -573,7 +652,8 @@ function buildFBOs(){
   }
   clearTrails();
 }
-function trailsReady(){return (S.fx.trails.on||S.fx.feedback.on)&&fxFBO&&ping&&pong;}
+function compReady(){const F=S.fx;
+  return (F.trails.on||F.feedback.on||F.slit.on||F.rgbdelay.on)&&fxFBO&&ping&&pong;}
 function bindTex(unit,tex){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex);}
 
 /* ================= camera / fallback source ================= */
@@ -783,6 +863,7 @@ function drawFx(t){
   gl.uniform1f(U.uFlow,on("flow"));
   gl.uniform1f(U.uDrift,on("drift"));
   gl.uniform1f(U.uShake,on("shake"));
+  gl.uniform1f(U.uMelt,on("melt"));
   gl.uniform1f(U.uGlitch,on("glitch"));
   gl.uniform1f(U.uVHS,on("vhs"));
   gl.uniform1f(U.uRGB,on("rgb"));
@@ -792,6 +873,9 @@ function drawFx(t){
   gl.uniform1f(U.uInvert,on("invert"));
   gl.uniform1f(U.uPrism,on("prism"));
   gl.uniform1f(U.uPlasma,on("plasma"));
+  gl.uniform1f(U.uSolar,on("solar"));
+  gl.uniform1f(U.uColorama,on("colorama"));
+  gl.uniform1f(U.uThresh,on("thresh"));
   gl.uniform1f(U.uEdge,on("edge"));
   gl.uniform1f(U.uScan,on("scan"));
   gl.uniform1f(U.uGrain,on("grain"));
@@ -799,6 +883,9 @@ function drawFx(t){
   gl.uniform1f(U.uRays,on("rays"));
   gl.uniform1f(U.uStars,on("stars"));
   gl.uniform1f(U.uHalftone,on("halftone"));
+  gl.uniform1f(U.uVoronoi,on("voronoi"));
+  gl.uniform1f(U.uZoomBlur,on("zoomblur"));
+  gl.uniform1f(U.uJulia,on("julia"));
   gl.drawArrays(gl.TRIANGLES,0,3);
 }
 function renderFrame(t){
@@ -822,7 +909,7 @@ function renderFrame(t){
   gl.uniform1f(mixP.U.uMix,S.xfade);
   gl.drawArrays(gl.TRIANGLES,0,3);
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-  if(trailsReady()){
+  if(compReady()){
     gl.bindFramebuffer(gl.FRAMEBUFFER,fxFBO.fb);
     drawFx(t);
     const tgt=usePing?ping:pong;
@@ -832,9 +919,14 @@ function renderFrame(t){
     gl.uniform1i(compP.U.uCur,0); gl.uniform1i(compP.U.uPrev,1);
     const fb=S.fx.feedback.on?S.fx.feedback.amt:0;
     const tr=S.fx.trails.on?S.fx.trails.amt:0;
-    gl.uniform1f(compP.U.uTAmt,Math.max(tr,fb>0?Math.min(0.5+0.42*fb,0.96):0));
+    const sl=S.fx.slit.on?S.fx.slit.amt:0;
+    const rd=S.fx.rgbdelay.on?S.fx.rgbdelay.amt:0;
+    gl.uniform1f(compP.U.uTAmt,Math.max(tr,fb>0?Math.min(0.5+0.42*fb,0.96):0,sl>0?0.92:0));
     gl.uniform1f(compP.U.uTZoom,tr>0?0.012:-0.02*fb);
     gl.uniform1f(compP.U.uFRot,fb>0?0.03*fb:0);
+    gl.uniform1f(compP.U.uTimeC,t);
+    gl.uniform1f(compP.U.uSlit,sl);
+    gl.uniform1f(compP.U.uRGBD,rd);
     gl.drawArrays(gl.TRIANGLES,0,3);
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     useQuad(blitP);
@@ -877,7 +969,7 @@ function toggleFx(id){
   const f=S.fx[id];f.on=!f.on;
   $("t_"+id).setAttribute("aria-pressed",f.on?"true":"false");
   if(id==="mirror")$("rowMirror").style.display=f.on?"flex":"none";
-  if((id==="trails"||id==="feedback")&&f.on){if(!fxFBO||!ping||!pong){buildFBOs();}clearTrails();}
+  if((id==="trails"||id==="feedback"||id==="slit"||id==="rgbdelay")&&f.on){if(!fxFBO||!ping||!pong){buildFBOs();}clearTrails();}
   buildSliders();
 }
 function buildSliders(){
@@ -1218,7 +1310,9 @@ const REMIX_POOL=[
  ["vhs",0.4,1],["rgb",0.005,0.03],["hue",0.3,1.5],["poster",3,6,1],
  ["duo",0.5,1],["prism",0.4,1.5],["plasma",0.4,1.2],["edge",0.3,0.9],
  ["scan",0.3,1],["grain",0.2,0.8],["vig",0.3,0.8],["rays",0.4,1.2],
- ["stars",0.4,1.2],["halftone",0.5,1.2],["feedback",0.4,0.85],["mirror",1,3,1]
+ ["stars",0.4,1.2],["halftone",0.5,1.2],["feedback",0.4,0.85],["mirror",1,3,1],
+ ["solar",0.4,1],["colorama",0.5,1.5],["thresh",0.4,1],["voronoi",3,8],
+ ["julia",0.5,1.5],["melt",0.4,1.5],["zoomblur",0.4,1.2],["slit",0.5,1.5],["rgbdelay",0.5,1]
 ];
 function syncFxUI(){
   Object.keys(S.fx).forEach(id=>{
@@ -1275,14 +1369,14 @@ $("performBtn").onclick=()=>{
   document.body.classList.add("perform");
   const el=document.documentElement;
   if(el.requestFullscreen)el.requestFullscreen().catch(()=>{});
-  nudge("Perform mode — tap Exit to return");
+  nudge("Perform: tap right = new mix, left = back, double-tap = fade");
 };
 $("exitPerform").onclick=()=>{
   document.body.classList.remove("perform");
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
   buildSliders();
 };
-$("remixBtn").onclick=()=>{remix();if(reactorActive())seedAtClient(innerWidth/2,innerHeight/2);};
+$("remixBtn").onclick=()=>{remixNext();if(reactorActive())seedAtClient(innerWidth/2,innerHeight/2);};
 $("sFeed").oninput=e=>{S.rFeed=+e.target.value;$("vFeed").textContent=S.rFeed.toFixed(3);};
 $("sKill").oninput=e=>{S.rKill=+e.target.value;$("vKill").textContent=S.rKill.toFixed(3);};
 $("sSpeed").oninput=e=>{S.rSpeed=+e.target.value;$("vSpeed").textContent=S.rSpeed;};
@@ -1322,6 +1416,27 @@ function autoXfade(){
   };
   xfadeAnim=requestAnimationFrame(step);
 }
+const remixHist=[];
+function snapState(){
+  const s={motion:S.motion,mirrorMode:S.mirrorMode,fx:{}};
+  Object.keys(S.fx).forEach(id=>{s.fx[id]={on:S.fx[id].on,amt:S.fx[id].amt};});
+  return s;
+}
+function restoreState(s){
+  Object.keys(s.fx).forEach(id=>{if(S.fx[id]){S.fx[id].on=s.fx[id].on;S.fx[id].amt=s.fx[id].amt;}});
+  S.motion=s.motion; S.mirrorMode=s.mirrorMode||1;
+  syncFxUI();
+}
+function remixNext(){
+  remixHist.push(snapState());
+  if(remixHist.length>40)remixHist.shift();
+  remix();
+}
+function remixBack(){
+  if(!remixHist.length){nudge("Nothing to go back to — tap right for something new");return;}
+  restoreState(remixHist.pop());
+  nudge("Back");
+}
 canvas.addEventListener("pointerdown",e=>{
   if(!inPerform()){
     if(reactorActive()){seedAtClient(e.clientX,e.clientY);nudge("Splat",900);}
@@ -1330,7 +1445,8 @@ canvas.addEventListener("pointerdown",e=>{
   const now=performance.now();
   if(now-lastTapT<350){lastTapT=now;autoXfade();return;}
   lastTapT=now;
-  remix();
+  const r=canvas.getBoundingClientRect();
+  if(e.clientX-r.left<r.width*0.5)remixBack(); else remixNext();
   if(reactorActive())seedAtClient(e.clientX,e.clientY);
 });
 simInit();
