@@ -170,6 +170,7 @@
 
   <div class="row">
     <button id="flip">Flip camera</button>
+    <button id="mirrorBtn" aria-pressed="false">Mirror</button>
     <button id="rotBtn">Rotate</button>
     <button id="snap">Snapshot</button>
     <button id="rec" class="rec">Record</button>
@@ -689,14 +690,18 @@ const FS_MIX=`#version 300 es
 precision highp float;
 uniform sampler2D uA,uB;
 uniform vec2 uCoverA,uCoverB;
-uniform float uMix;
+uniform float uMix,uFlipA,uFlipB;
 in vec2 vUv; out vec4 frag;
 void main(){
-  vec3 a=texture(uA,(vUv-0.5)*uCoverA+0.5).rgb;
-  vec3 b=texture(uB,(vUv-0.5)*uCoverB+0.5).rgb;
+  vec2 uva=(vUv-0.5)*uCoverA+0.5;
+  vec2 uvb=(vUv-0.5)*uCoverB+0.5;
+  if(uFlipA>0.5) uva.x=1.0-uva.x;
+  if(uFlipB>0.5) uvb.x=1.0-uvb.x;
+  vec3 a=texture(uA,uva).rgb;
+  vec3 b=texture(uB,uvb).rgb;
   frag=vec4(mix(a,b,clamp(uMix,0.0,1.0)),1.0);
 }`;
-const mixP=prog(FS_MIX,["uA","uB","uCoverA","uCoverB","uMix"]);
+const mixP=prog(FS_MIX,["uA","uB","uCoverA","uCoverB","uMix","uFlipA","uFlipB"]);
 let mixFBO=null;
 const blitP=prog(FS_BLIT,["uT"]);
 
@@ -880,7 +885,16 @@ $("camRetry").onclick=async()=>{hideCambar();await initCamera();
   if(S.deckA!=="camera"&&S.deckB!=="camera")setDeck("A","camera");};
 $("retryCam").onclick=async()=>{await initCamera();
   if(S.deckA!=="camera"&&S.deckB!=="camera")setDeck("A","camera");};
-$("flip").onclick=async()=>{S.facing=S.facing==="environment"?"user":"environment";await initCamera();};
+$("flip").onclick=async()=>{
+  S.facing=S.facing==="environment"?"user":"environment";
+  S.camMirror=(S.facing==="user"); // front camera previews mirrored, like every camera app
+  syncMirrorBtn();
+  await initCamera();
+};
+S.camMirror=false;
+function syncMirrorBtn(){const b=$("mirrorBtn");if(b)b.setAttribute("aria-pressed",S.camMirror?"true":"false");}
+$("mirrorBtn").onclick=()=>{S.camMirror=!S.camMirror;syncMirrorBtn();
+  nudge(S.camMirror?"Camera mirrored":"Camera unmirrored");};
 $("rotBtn").onclick=()=>{S.rot=((S.rot||0)+1)%4;nudge("Rotation: "+(S.rot*90)+"°");};
 
 const photoCan=document.createElement("canvas");
@@ -1030,6 +1044,8 @@ function renderFrame(t){
   gl.uniform2f(mixP.U.uCoverA,cA[0],cA[1]);
   gl.uniform2f(mixP.U.uCoverB,cB[0],cB[1]);
   gl.uniform1f(mixP.U.uMix,S.xfade);
+  gl.uniform1f(mixP.U.uFlipA,(S.deckA==="camera"&&S.camMirror)?1:0);
+  gl.uniform1f(mixP.U.uFlipB,(S.deckB==="camera"&&S.camMirror)?1:0);
   gl.drawArrays(gl.TRIANGLES,0,3);
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   if(compReady()){
