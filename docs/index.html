@@ -52,6 +52,29 @@
     padding:10px 20px; font-size:14px; opacity:.75; }
   body.perform #panel { display:none; }
   body.perform #exitPerform { display:block; }
+  #mixesBtnPerform { position:fixed; right:14px; bottom:64px; z-index:60; display:none;
+    background:rgba(10,10,12,.55); color:#fff; border:1px solid #555; border-radius:20px;
+    padding:10px 20px; font-size:14px; opacity:.75; }
+  body.perform #mixesBtnPerform { display:block; }
+  #mixOverlay { position:fixed; left:0; right:0; bottom:0; z-index:70; display:none;
+    background:rgba(8,8,12,.96); border-top:1px solid #444; border-radius:16px 16px 0 0;
+    padding:14px 16px calc(18px + env(safe-area-inset-bottom)); max-height:62vh;
+    overflow-y:auto; }
+  #mixOverlay.open { display:block; }
+  .mixhead { display:flex; justify-content:space-between; align-items:center;
+    font-size:14px; font-weight:700; margin-bottom:10px; }
+  .mixhead button { background:none; border:none; color:#fff; font-size:18px; padding:4px 10px; }
+  .mixsave { display:flex; gap:8px; margin-bottom:10px; }
+  .mixsave input { flex:1; background:#16161c; border:1px solid #444; border-radius:8px;
+    color:#fff; padding:10px 12px; font-size:14px; }
+  .mixsave button { background:#e8e8f0; color:#111; border:none; border-radius:8px;
+    padding:10px 18px; font-size:14px; font-weight:700; }
+  .mixrow { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .mixname { flex:1; text-align:left; background:#16161c; border:1px solid #333;
+    border-radius:8px; color:#fff; padding:11px 12px; font-size:14px; }
+  .mixdel { background:none; border:1px solid #333; border-radius:8px; color:#888;
+    font-size:16px; padding:9px 13px; }
+  .mixempty { color:#777; font-size:13px; padding:12px 4px; }
 </style>
 </head>
 <body>
@@ -59,6 +82,12 @@
 <div id="nudge"></div>
 <div id="cambar"><p id="cambarMsg"></p><div class="row"><button id="camRetry" class="primary">Enable camera</button></div></div>
 <button id="exitPerform">Exit</button>
+<button id="mixesBtnPerform">Mixes</button>
+<div id="mixOverlay">
+  <div class="mixhead"><span>Saved mixes</span><button id="mixClose">✕</button></div>
+  <div class="mixsave"><input id="mixName" placeholder="Name this mix…" maxlength="40" autocomplete="off"><button id="doSaveMix">Save</button></div>
+  <div id="mixList"></div>
+</div>
 
 <div id="panel">
   <div id="grab"></div>
@@ -146,6 +175,7 @@
     <button id="rec" class="rec">Record</button>
     <button id="performBtn">Perform</button>
     <button id="remixBtn">Remix</button>
+    <button id="mixesBtnPanel">Mixes</button>
     <span id="recTime" class="val"></span>
   </div>
 
@@ -229,6 +259,16 @@ const FXDEF=[
  ["Motion","melt","Melt",false,["Melt",0,2,0.05,1,v=>v.toFixed(2)]],
  ["Time","slit","Slit scan",false,["Slit",0,2,0.05,1,v=>v.toFixed(2)]],
  ["Time","rgbdelay","RGB delay",false,["Delay",0,1,0.05,0.8,v=>v.toFixed(2)]],
+ ["Motion","wobble","Wobble",false,["Wobble",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","vibrate","Vibrate",false,["Vibrate",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Motion","ripple","Ripple",false,["Ripple",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Warp","dome","Dome",false,["Dome",0,1.5,0.05,0.8,v=>v.toFixed(2)]],
+ ["Warp","slice","Slice",false,["Slice",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Color","chroma","Chroma",false,["Chroma",0,2,0.05,1,v=>v.toFixed(2)]],
+ ["Look","discharge","Discharge",false,["Discharge",0,1.5,0.05,0.8,v=>v.toFixed(2)]],
+ ["Look","diffuse","Diffusion",false,["Diffusion",0,1.5,0.05,0.8,v=>v.toFixed(2)]],
+ ["Look","emboss","Emboss",false,["Emboss",0,1,0.05,0.7,v=>v.toFixed(2)]],
+ ["Look","leak","Light leak",false,["Leak",0,1.5,0.05,0.8,v=>v.toFixed(2)]],
 ];
 const S={fx:{},mirrorMode:1,facing:"environment",motion:1,quality:1080,bitrate:16000000,
   reactor:false,rFeed:0.014,rKill:0.054,rSpeed:6,rCamFeed:true};
@@ -253,11 +293,13 @@ uniform sampler2D uTex;
 uniform vec2 uRes,uCover,uTexel;
 uniform float uTime;
 uniform float uKSeg,uMirror,uSwirl,uBulge,uWave,uPixel;
-uniform float uSpin,uTunnel,uPulse,uFlow,uDrift,uShake,uMelt;
+uniform float uSpin,uTunnel,uPulse,uFlow,uDrift,uShake,uMelt,uWobble,uVibrate,uRipple,uDome,uSlice;
 uniform float uRot;
 uniform float uGlitch,uVHS;
-uniform float uRGB,uHue,uPoster,uDuo,uInvert,uPrism,uPlasma,uSolar,uColorama,uThresh;
+uniform float uRGB,uHue,uPoster,uDuo,uInvert,uPrism,uPlasma,uSolar,uColorama,uThresh,uChroma;
 uniform float uEdge,uScan,uGrain,uVig,uRays,uStars,uHalftone,uVoronoi,uZoomBlur,uJulia;
+uniform float uDischarge,uDiffuse,uEmboss,uLeak;
+uniform vec2 uTapC;
 uniform float uEcho,uFeedback;
 in vec2 vUv; out vec4 frag;
 float hash(float n){return fract(sin(n*127.1)*43758.5453);}
@@ -309,6 +351,17 @@ void main(){
     uv.x+=sin(uv.y*24.0+t*3.0)*0.022*uWave;
     uv.y+=cos(uv.x*20.0-t*2.2)*0.022*uWave;
   }
+  if(uDome>0.001){
+    vec2 c=uv-0.5;
+    float r2=dot(c,c);
+    uv=c*(1.0+uDome*r2*3.0)+0.5;
+  }
+  if(uSlice>0.001){
+    float row=floor(uv.y*24.0);
+    float sh=hash2(vec2(row,floor(t*8.0)));
+    float gate=step(0.62,hash2(vec2(row,floor(t*8.0)+13.7)));
+    uv.x+=gate*(sh-0.5)*0.45*uSlice;
+  }
   if(uSpin>0.001){
     vec2 c=uv-0.5;
     float a=t*0.9*uSpin;
@@ -342,6 +395,23 @@ void main(){
     float st=floor(t*18.0);
     vec2 sh=(vec2(hash2(vec2(st,1.7)),hash2(vec2(st,9.2)))-0.5)*0.055*uShake;
     uv+=sh;
+  }
+  if(uWobble>0.001){
+    uv.x+=sin(uv.y*12.0+t*3.0)*0.02*uWobble;
+    uv.y+=cos(uv.x*10.0+t*2.3)*0.02*uWobble;
+  }
+  if(uVibrate>0.001){
+    uv.x+=sin(uv.y*220.0+t*45.0)*0.0035*uVibrate;
+    uv.y+=cos(uv.x*190.0-t*38.0)*0.0035*uVibrate;
+  }
+  if(uRipple>0.001){
+    vec2 asp=vec2(uRes.x/uRes.y,1.0);
+    vec2 rc=(uv-uTapC)*asp;
+    float r=length(rc);
+    float w=sin(r*36.0-t*7.0)*0.5+0.5;
+    float fall=exp(-r*2.5)*smoothstep(0.0,0.12,r);
+    vec2 dir=rc/max(r,1e-3);
+    uv-=dir*w*fall*0.035*uRipple/asp;
   }
   if(uMelt>0.001){
     float stripes=sin(uv.x*90.0+t*2.0)*0.5+0.5;
@@ -391,6 +461,14 @@ void main(){
     vec3 pc=mix(vec3(0.10,0.20,0.90),vec3(0.90,0.30,0.70),pl);
     pc=mix(pc,vec3(0.20,0.90,0.80),0.5+0.5*sin(pl*6.2831+t*0.8));
     col=mix(col,pc,0.38*clamp(uPlasma,0.0,1.5));
+  }
+  if(uChroma>0.001){
+    vec2 cc=uv-0.5;
+    float rr=length(cc);
+    vec2 cdir=cc/max(rr,1e-3);
+    float ca=uChroma*0.035*(0.25+rr*2.0);
+    col.r=texture(uTex,uv+cdir*ca).r;
+    col.b=texture(uTex,uv-cdir*ca).b;
   }
   if(uHue>0.001){
     vec3 hsv=rgb2hsv(col);
@@ -488,6 +566,11 @@ void main(){
     }
     col+=acc*0.6*min(uStars,1.5);
   }
+  if(uLeak>0.001){
+    float l1=exp(-pow(length(uv-vec2(0.5+0.35*sin(t*0.4),0.5+0.3*cos(t*0.33)))*2.2,2.0));
+    float l2=exp(-pow(length(uv-vec2(0.5+0.4*cos(t*0.27),0.5+0.35*sin(t*0.5)))*2.6,2.0));
+    col+=(vec3(1.0,0.45,0.25)*l1+vec3(0.3,0.5,1.0)*l2)*0.45*clamp(uLeak,0.0,1.5);
+  }
   if(uHalftone>0.001){
     vec2 g=uv*uRes/7.0;
     float lum=dot(col,vec3(0.299,0.587,0.114));
@@ -497,6 +580,34 @@ void main(){
     float ink=smoothstep(rad,rad-0.10,d);
     vec3 ht=mix(vec3(0.94,0.93,0.90),vec3(0.03,0.03,0.06),ink);
     col=mix(col,ht,clamp(uHalftone,0.0,1.0));
+  }
+  if(uDischarge>0.001){
+    vec2 dp=(uv-0.5)*vec2(uRes.x/uRes.y,1.0);
+    float dang=atan(dp.y,dp.x);
+    float drad=length(dp);
+    float bolt=0.0;
+    for(int i=0;i<3;i++){
+      float fi=float(i);
+      float w=hash2(vec2(floor(dang*9.0+fi*7.0),floor(drad*15.0-fi*3.0+t*3.0)));
+      bolt+=smoothstep(0.72,1.0,w)*exp(-drad*2.5)/(fi+1.0);
+    }
+    col+=vec3(0.6,0.85,1.0)*bolt*clamp(uDischarge,0.0,1.5);
+  }
+  if(uDiffuse>0.001){
+    vec3 dacc=vec3(0.0);
+    float dR=0.006*uDiffuse;
+    for(int i=-2;i<=2;i++)for(int j=-2;j<=2;j++)
+      dacc+=texture(uTex,uv+vec2(float(i),float(j))*dR).rgb;
+    dacc/=25.0;
+    float dl=dot(dacc,vec3(0.299,0.587,0.114));
+    col+=dacc*smoothstep(0.35,0.9,dl)*0.8*clamp(uDiffuse,0.0,1.5);
+  }
+  if(uEmboss>0.001){
+    float ee=0.004;
+    float egx=lumAt(uv+vec2(ee,0.0))-lumAt(uv-vec2(ee,0.0));
+    float egy=lumAt(uv+vec2(0.0,ee))-lumAt(uv-vec2(0.0,ee));
+    float emb=clamp((egx+egy)*2.0+0.5,0.0,1.0);
+    col=mix(col,vec3(emb),clamp(uEmboss,0.0,1.0));
   }
   if(uJulia>0.001){
     vec2 p=(uv-0.5)*2.4; p.x*=uRes.x/uRes.y;
@@ -567,10 +678,11 @@ function useQuad(p){
 }
 const fxP=prog(FS_FX,["uTex","uRes","uCover","uTexel","uTime",
   "uKSeg","uMirror","uSwirl","uBulge","uWave","uPixel",
-  "uSpin","uTunnel","uPulse","uFlow","uDrift","uShake","uMelt","uRot",
+  "uSpin","uTunnel","uPulse","uFlow","uDrift","uShake","uMelt","uWobble","uVibrate","uRipple","uDome","uSlice","uRot",
   "uGlitch","uVHS","uRGB","uHue","uPoster","uDuo","uInvert","uPrism","uPlasma",
-  "uSolar","uColorama","uThresh",
-  "uEdge","uScan","uGrain","uVig","uRays","uStars","uHalftone","uVoronoi","uZoomBlur","uJulia"]);
+  "uSolar","uColorama","uThresh","uChroma",
+  "uEdge","uScan","uGrain","uVig","uRays","uStars","uHalftone","uVoronoi","uZoomBlur","uJulia",
+  "uDischarge","uDiffuse","uEmboss","uLeak","uTapC"]);
 const compP=prog(FS_COMP,["uCur","uPrev","uTAmt","uTZoom","uFRot","uTimeC","uSlit","uRGBD"]);
 
 const FS_MIX=`#version 300 es
@@ -864,6 +976,12 @@ function drawFx(t){
   gl.uniform1f(U.uDrift,on("drift"));
   gl.uniform1f(U.uShake,on("shake"));
   gl.uniform1f(U.uMelt,on("melt"));
+  gl.uniform1f(U.uWobble,on("wobble"));
+  gl.uniform1f(U.uVibrate,on("vibrate"));
+  gl.uniform1f(U.uRipple,on("ripple"));
+  gl.uniform1f(U.uDome,on("dome"));
+  gl.uniform1f(U.uSlice,on("slice"));
+  gl.uniform2f(U.uTapC,tapCX,tapCY);
   gl.uniform1f(U.uGlitch,on("glitch"));
   gl.uniform1f(U.uVHS,on("vhs"));
   gl.uniform1f(U.uRGB,on("rgb"));
@@ -876,6 +994,7 @@ function drawFx(t){
   gl.uniform1f(U.uSolar,on("solar"));
   gl.uniform1f(U.uColorama,on("colorama"));
   gl.uniform1f(U.uThresh,on("thresh"));
+  gl.uniform1f(U.uChroma,on("chroma"));
   gl.uniform1f(U.uEdge,on("edge"));
   gl.uniform1f(U.uScan,on("scan"));
   gl.uniform1f(U.uGrain,on("grain"));
@@ -886,6 +1005,10 @@ function drawFx(t){
   gl.uniform1f(U.uVoronoi,on("voronoi"));
   gl.uniform1f(U.uZoomBlur,on("zoomblur"));
   gl.uniform1f(U.uJulia,on("julia"));
+  gl.uniform1f(U.uDischarge,on("discharge"));
+  gl.uniform1f(U.uDiffuse,on("diffuse"));
+  gl.uniform1f(U.uEmboss,on("emboss"));
+  gl.uniform1f(U.uLeak,on("leak"));
   gl.drawArrays(gl.TRIANGLES,0,3);
 }
 function renderFrame(t){
@@ -1392,7 +1515,10 @@ const REMIX_POOL=[
  ["scan",0.3,1],["grain",0.2,0.8],["vig",0.3,0.8],["rays",0.4,1.2],
  ["stars",0.4,1.2],["halftone",0.5,1.2],["feedback",0.4,0.85],["mirror",1,3,1],
  ["solar",0.4,1],["colorama",0.5,1.5],["thresh",0.4,1],["voronoi",3,8],
- ["julia",0.5,1.5],["melt",0.4,1.5],["zoomblur",0.4,1.2],["slit",0.5,1.5],["rgbdelay",0.5,1]
+ ["julia",0.5,1.5],["melt",0.4,1.5],["zoomblur",0.4,1.2],["slit",0.5,1.5],["rgbdelay",0.5,1],
+ ["wobble",0.4,1.5],["vibrate",0.4,1.2],["ripple",0.5,1.5],["dome",0.4,1.2],
+ ["slice",0.4,1.2],["chroma",0.4,1.5],["discharge",0.4,1],["diffuse",0.4,1.2],
+ ["emboss",0.4,1],["leak",0.4,1.2]
 ];
 function syncFxUI(){
   Object.keys(S.fx).forEach(id=>{
@@ -1404,6 +1530,8 @@ function syncFxUI(){
   $("rowMirror").style.display=S.fx.mirror.on?"flex":"none";
   buildSliders();
   $("sMotion").value=S.motion; $("vMotion").textContent=(+S.motion).toFixed(2);
+  const F=S.fx;
+  if((F.trails.on||F.feedback.on||F.slit.on||F.rgbdelay.on)&&(!fxFBO||!ping||!pong))buildFBOs();
 }
 function remix(){
   Object.values(S.fx).forEach(f=>f.on=false);
@@ -1496,6 +1624,7 @@ function autoXfade(){
   };
   xfadeAnim=requestAnimationFrame(step);
 }
+let tapCX=0.5,tapCY=0.5;
 const remixHist=[];
 function snapState(){
   const s={motion:S.motion,mirrorMode:S.mirrorMode,fx:{}};
@@ -1517,6 +1646,41 @@ function remixBack(){
   restoreState(remixHist.pop());
   nudge("Back");
 }
+/* saved mixes: name the look on screen, bring it back anytime */
+function getMixes(){try{return JSON.parse(localStorage.getItem("prismMixes")||"[]");}catch(e){return[];}}
+function setMixes(m){try{localStorage.setItem("prismMixes",JSON.stringify(m));}catch(e){nudge("Couldn't save mix");}}
+function currentMixState(){const s=snapState();s.xfade=S.xfade;return s;}
+function applyMixState(s){
+  if(!s||!s.fx)return;
+  restoreState(s);
+  if(typeof s.xfade==="number"){S.xfade=Math.min(1,Math.max(0,s.xfade));$("sXfade").value=S.xfade;updXfadeLabel();}
+}
+function renderMixList(){
+  const list=$("mixList"),mixes=getMixes();
+  list.innerHTML="";
+  if(!mixes.length){list.innerHTML='<div class="mixempty">No saved mixes yet — dial in a look and hit Save.</div>';return;}
+  mixes.forEach((m,i)=>{
+    const row=document.createElement("div");row.className="mixrow";
+    const nm=document.createElement("button");nm.className="mixname";nm.textContent=m.name;
+    nm.onclick=()=>{applyMixState(m.state);nudge("Loaded \u201c"+m.name+"\u201d");closeMixes();};
+    const del=document.createElement("button");del.className="mixdel";del.textContent="✕";
+    del.onclick=()=>{const a=getMixes();a.splice(i,1);setMixes(a);renderMixList();};
+    row.appendChild(nm);row.appendChild(del);list.appendChild(row);
+  });
+}
+function openMixes(){$("mixOverlay").classList.add("open");$("mixName").value="";renderMixList();}
+function closeMixes(){$("mixOverlay").classList.remove("open");}
+$("mixesBtnPanel").onclick=openMixes;
+$("mixesBtnPerform").onclick=openMixes;
+$("mixClose").onclick=closeMixes;
+$("doSaveMix").onclick=()=>{
+  const name=($("mixName").value||"").trim()||("Mix "+(getMixes().length+1));
+  const mixes=getMixes();
+  mixes.unshift({name:name,state:currentMixState(),t:Date.now()});
+  while(mixes.length>50)mixes.pop();
+  setMixes(mixes);renderMixList();
+  nudge("Saved \u201c"+name+"\u201d");
+};
 canvas.addEventListener("pointerdown",e=>{
   if(!inPerform()){
     if(reactorActive()){seedAtClient(e.clientX,e.clientY);nudge("Splat",900);}
@@ -1526,6 +1690,7 @@ canvas.addEventListener("pointerdown",e=>{
   if(now-lastTapT<350){lastTapT=now;autoXfade();return;}
   lastTapT=now;
   const r=canvas.getBoundingClientRect();
+  tapCX=(e.clientX-r.left)/r.width; tapCY=1-(e.clientY-r.top)/r.height;
   if(e.clientX-r.left<r.width*0.5)remixBack(); else remixNext();
   if(reactorActive())seedAtClient(e.clientX,e.clientY);
 });
