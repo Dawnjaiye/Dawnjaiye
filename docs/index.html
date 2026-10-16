@@ -56,6 +56,11 @@
     background:rgba(10,10,12,.55); color:#fff; border:1px solid #555; border-radius:20px;
     padding:10px 20px; font-size:14px; opacity:.75; }
   body.perform #mixesBtnPerform { display:block; }
+  #recBtnPerform { position:fixed; right:14px; bottom:114px; z-index:60; display:none;
+    background:rgba(10,10,12,.55); color:#fff; border:1px solid #555; border-radius:20px;
+    padding:10px 20px; font-size:14px; opacity:.75; min-width:86px; }
+  body.perform #recBtnPerform { display:block; }
+  #recBtnPerform.on { background:rgba(140,12,12,.72); border-color:#f66; }
   #mixOverlay { position:fixed; left:0; right:0; bottom:0; z-index:70; display:none;
     background:rgba(8,8,12,.96); border-top:1px solid #444; border-radius:16px 16px 0 0;
     padding:14px 16px calc(18px + env(safe-area-inset-bottom)); max-height:62vh;
@@ -83,6 +88,7 @@
 <div id="cambar"><p id="cambarMsg"></p><div class="row"><button id="camRetry" class="primary">Enable camera</button></div></div>
 <button id="exitPerform">Exit</button>
 <button id="mixesBtnPerform">Mixes</button>
+<button id="recBtnPerform">Record</button>
 <div id="mixOverlay">
   <div class="mixhead"><span>Saved mixes</span><button id="mixClose">✕</button></div>
   <div class="mixsave"><input id="mixName" placeholder="Name this mix…" maxlength="40" autocomplete="off"><button id="doSaveMix">Save</button></div>
@@ -193,6 +199,7 @@
       <option value="30000000">30 Mbps</option>
     </select>
     <button id="audBtn" aria-pressed="false" title="Include a silent audio track in recordings">Audio</button>
+    <button id="orientBtn" aria-pressed="false" title="Recording orientation">16:9</button>
   </div>
 
   <div class="row">
@@ -272,7 +279,7 @@ const FXDEF=[
  ["Look","leak","Light leak",false,["Leak",0,1.5,0.05,0.8,v=>v.toFixed(2)]],
 ];
 const S={fx:{},mirrorMode:1,facing:"environment",motion:1,quality:1080,bitrate:16000000,
-  reactor:false,rFeed:0.014,rKill:0.054,rSpeed:6,rCamFeed:true};
+  reactor:false,rFeed:0.014,rKill:0.054,rSpeed:6,rCamFeed:true,recOrient:"landscape",recAudio:false};
 FXDEF.forEach(d=>{S.fx[d[1]]={on:d[3],amt:d[4]?d[4][4]:0,def:d};});
 
 const nudgeEl=$("nudge");
@@ -1138,18 +1145,28 @@ $("sMotion").oninput=e=>{S.motion=+e.target.value;$("vMotion").textContent=S.mot
 $("grab").onclick=()=>$("panel").classList.toggle("hidden");
 $("qSel").onchange=e=>{S.quality=+e.target.value;resize();nudge("Capture quality: "+S.quality+"p");};
 $("bSel").onchange=e=>{S.bitrate=+e.target.value;};
-S.recAudio=false;
 $("audBtn").onclick=e=>{S.recAudio=!S.recAudio;
   e.target.setAttribute("aria-pressed",S.recAudio?"true":"false");
   nudge(S.recAudio?"Audio ON — recordings get a silent audio track":"Audio OFF — video-only recordings");};
+$("orientBtn").onclick=e=>{
+  if(recorder){nudge("Stop recording to change orientation");return;}
+  S.recOrient=S.recOrient==="landscape"?"portrait":"landscape";
+  const p=S.recOrient==="portrait";
+  e.target.textContent=p?"9:16":"16:9";
+  e.target.setAttribute("aria-pressed",p?"true":"false");
+  sizeRecCanvas();
+  nudge(p?"Portrait recording (9:16) — made for stories":"Landscape recording (16:9)");
+};
 const recCanvas=document.createElement("canvas");
 const rctx=recCanvas.getContext("2d");
 function sizeRecCanvas(){
   const w=S.quality===1080?1920:1280;
-  recCanvas.width=w; recCanvas.height=Math.floor(w*9/16);
+  if(S.recOrient==="portrait"){recCanvas.width=Math.floor(w*9/16);recCanvas.height=w;}
+  else{recCanvas.width=w;recCanvas.height=Math.floor(w*9/16);}
 }
 function blitToRec(){
-  const sw=canvas.width,sh=canvas.height,tA=16/9,sA=sw/sh;
+  const sw=canvas.width,sh=canvas.height;
+  const tA=S.recOrient==="portrait"?9/16:16/9,sA=sw/sh;
   let sx=0,sy=0,cw=sw,ch=sh;
   if(sA>tA){cw=sh*tA;sx=(sw-cw)/2;}else{ch=sw/tA;sy=(sh-ch)/2;}
   rctx.drawImage(canvas,sx,sy,cw,ch,0,0,recCanvas.width,recCanvas.height);
@@ -1166,7 +1183,7 @@ $("snap").onclick=()=>{
   blitToRec();
   recCanvas.toBlob(b=>{if(!b){nudge("Snapshot failed");return;}
     const a=document.createElement("a");
-    a.href=URL.createObjectURL(b);a.download="prism-cam-"+S.quality+"p.png";a.click();
+    a.href=URL.createObjectURL(b);a.download="prism-cam-"+S.quality+"p"+(S.recOrient==="portrait"?"-portrait":"")+".png";a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);});
   nudge("Snapshot saved ("+S.quality+"p)");
 };
@@ -1265,8 +1282,16 @@ function fixMp4Duration(buf,wallSec){
     return buf;
   }catch(e){return null;}
 }
+function setRecUI(on,secs){
+  ["rec","recBtnPerform"].forEach(id=>{
+    const b=$(id);if(!b)return;
+    b.classList.toggle("on",on);
+    b.textContent=on?("■ "+secs+"s"):"Record";
+  });
+  const rt=$("recTime");if(rt)rt.textContent=on?("● "+secs+"s"):"";
+}
+$("recBtnPerform").onclick=()=>$("rec").click();
 $("rec").onclick=e=>{
-  const btn=e.target;
   if(recorder){recorder.stop();return;}
   if(!window.MediaRecorder){nudge("Recording not supported in this browser");return;}
   const mime=pickMime();
@@ -1284,10 +1309,11 @@ $("rec").onclick=e=>{
     const wallSec=(Date.now()-recStart)/1000;
     const saveBlob=(blob)=>{
       const a=document.createElement("a");
-      a.href=URL.createObjectURL(blob);a.download="prism-cam-"+S.quality+"p."+ext;a.click();
+      const orient=S.recOrient==="portrait"?"-portrait":"";
+      a.href=URL.createObjectURL(blob);a.download="prism-cam-"+S.quality+"p"+orient+"."+ext;a.click();
       setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-      recorder=null;btn.classList.remove("on");btn.textContent="Record";
-      nudge("Clip saved ("+S.quality+"p "+ext+")");
+      recorder=null;setRecUI(false,0);
+      nudge("Clip saved ("+S.quality+"p "+(S.recOrient==="portrait"?"9:16":"16:9")+" "+ext+")");
     };
     if(ext==="mp4"){
       const raw=new Blob(chunks,{type:mime});
@@ -1300,8 +1326,8 @@ $("rec").onclick=e=>{
   recorder.start();
   recStart=Date.now();
   recTimer=setInterval(()=>{const s=Math.floor((Date.now()-recStart)/1000);
-    $("recTime").textContent="● "+s+"s";},500);
-  btn.classList.add("on");btn.textContent="Stop";
+    setRecUI(true,s);},500);
+  setRecUI(true,0);
 };
 
 /* ================= boot ================= */
