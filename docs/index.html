@@ -1055,6 +1055,77 @@ function silentAudioStream(){
     return dest.stream;
   }catch(e){return null;}
 }
+/* MP4 duration fixer: Chrome's MediaRecorder sometimes leaves mvhd/tkhd
+   durations at 0, so galleries/Instagram read the clip as 0:00. We recompute
+   each track's duration from its stts table and stamp the headers. Returns
+   the patched ArrayBuffer, or null if anything looks off (caller falls back
+   to the original bytes). */
+function _u32(dv,o){return dv.getUint32(o,false);}
+function _w32(dv,o,v){dv.setUint32(o,v,false);}
+function _w64(dv,o,v){dv.setUint32(o,Math.floor(v/0x100000000),false);dv.setUint32(o+4,v>>>0,false);}
+function _ver(dv,o){return dv.getUint8(o);}
+function* _boxes(dv,start,end){
+  let p=start;
+  while(p+8<=end){
+    let size=_u32(dv,p),hdr=8;
+    const t=String.fromCharCode(dv.getUint8(p+4),dv.getUint8(p+5),dv.getUint8(p+6),dv.getUint8(p+7));
+    if(size===1){size=_u32(dv,p+8)*0x100000000+_u32(dv,p+12);hdr=16;}
+    if(size===0)size=end-p;
+    if(size<8||p+size>end)break;
+    yield{type:t,off:p,size:size,hdr:hdr};
+    p+=size;
+  }
+}
+function _find(dv,start,end,type){
+  for(const b of _boxes(dv,start,end))if(b.type===type)return b;
+  return null;
+}
+function fixMp4Duration(buf,wallSec){
+  try{
+    const dv=new DataView(buf);
+    const moov=_find(dv,0,buf.byteLength,"moov");
+    if(!moov)return null;
+    const cs=moov.off+moov.hdr,ce=moov.off+moov.size;
+    const mvhd=_find(dv,cs,ce,"mvhd");
+    if(!mvhd)return null;
+    const mo=mvhd.off+mvhd.hdr, mv=_ver(dv,mo);
+    const mts=_u32(dv,mo+(mv===1?20:12));
+    if(!(mts>0))return null;
+    let maxDur=0;
+    for(const tr of _boxes(dv,cs,ce)){
+      if(tr.type!=="trak")continue;
+      const ts=tr.off+tr.hdr,te=tr.off+tr.size;
+      const tkhd=_find(dv,ts,te,"tkhd");
+      const mdia=_find(dv,ts,te,"mdia");
+      if(!mdia)continue;
+      const ms=mdia.off+mdia.hdr,me=mdia.off+mdia.size;
+      const mdhd=_find(dv,ms,me,"mdhd");
+      const minf=_find(dv,ms,me,"minf");
+      if(!mdhd||!minf)continue;
+      const dO=mdhd.off+mdhd.hdr, dV=_ver(dv,dO);
+      const tts=_u32(dv,dO+(dV===1?20:12))||mts;
+      const stbl=_find(dv,minf.off+minf.hdr,minf.off+minf.size,"stbl");
+      const stts=stbl&&_find(dv,stbl.off+stbl.hdr,stbl.off+stbl.size,"stts");
+      let total=0;
+      if(stts){
+        const sO=stts.off+stts.hdr,n=_u32(dv,sO+4);
+        for(let i=0;i<n&&i<100000;i++)total+=_u32(dv,sO+8+i*8)*_u32(dv,sO+12+i*8);
+      }
+      let trackDur=total;
+      if(!(trackDur>0)||trackDur>tts*wallSec*2)trackDur=Math.round(tts*wallSec);
+      if(dV===1)_w64(dv,dO+24,trackDur);else _w32(dv,dO+16,trackDur);
+      const kd=Math.round(trackDur*mts/tts);
+      if(tkhd){
+        const kO=tkhd.off+tkhd.hdr;
+        if(_ver(dv,kO)===1)_w64(dv,kO+28,kd);else _w32(dv,kO+20,kd);
+        if(kd>maxDur)maxDur=kd;
+      }
+    }
+    if(!(maxDur>0))maxDur=Math.round(mts*wallSec);
+    if(mv===1)_w64(dv,mo+24,maxDur);else _w32(dv,mo+16,maxDur);
+    return buf;
+  }catch(e){return null;}
+}
 $("rec").onclick=e=>{
   const btn=e.target;
   if(recorder){recorder.stop();return;}
@@ -1071,12 +1142,21 @@ $("rec").onclick=e=>{
   recorder.ondataavailable=ev=>{if(ev.data.size)chunks.push(ev.data);};
   recorder.onstop=()=>{
     clearInterval(recTimer);$("recTime").textContent="";
-    const blob=new Blob(chunks,{type:mime});
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);a.download="prism-cam-"+S.quality+"p."+ext;a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-    recorder=null;btn.classList.remove("on");btn.textContent="Record";
-    nudge("Clip saved ("+S.quality+"p "+ext+")");
+    const wallSec=(Date.now()-recStart)/1000;
+    const saveBlob=(blob)=>{
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);a.download="prism-cam-"+S.quality+"p."+ext;a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+      recorder=null;btn.classList.remove("on");btn.textContent="Record";
+      nudge("Clip saved ("+S.quality+"p "+ext+")");
+    };
+    if(ext==="mp4"){
+      const raw=new Blob(chunks,{type:mime});
+      raw.arrayBuffer().then(ab=>{
+        const fixed=fixMp4Duration(ab,wallSec);
+        saveBlob(new Blob([fixed||ab],{type:mime}));
+      }).catch(()=>saveBlob(raw));
+    }else saveBlob(new Blob(chunks,{type:mime}));
   };
   recorder.start();
   recStart=Date.now();
